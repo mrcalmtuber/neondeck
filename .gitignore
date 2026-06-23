@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+web/.env.local
+
+# Local test workspaces (real projects live under ~/.neondeck/projects, and on a
+# deploy under the mounted volume — these are stray dev artifacts, not source).
+projects/
+.claude/

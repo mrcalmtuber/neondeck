@@ -1,0 +1,306 @@
+import OpenAI from "openai";
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from "openai/resources/chat/completions";
+import type { ServerMessage, AgentMode } from "./shared/protocol.js";
+import type { DaemonConfig } from "./config.js";
+import { writeFile } from "./workspace.js";
+import type { Meter } from "./usage.js";
+
+/**
+ * Server-side "Vibe Coding" agent. The API key lives only here (host env via
+ * config) and never touches the browser. The browser sends prompt text; this
+ * loop runs the model + tools locally and streams results back over the socket.
+ */
+
+/**
+ * CONTEXT-CACHE ANCHOR: the global operating parameters, tool list, and sandbox
+ * constraints are a single static block pinned at message index 0 and never
+ * mutated. Keeping this prefix byte-identical across turns lets DeepSeek serve
+ * it from its server-side context cache.
+ */
+const SYSTEM_PROMPT = `You are a coding agent embedded in a local-first web IDE.
+You operate exclusively on the user's machine through a sandboxed Docker container.
+
+Tools:
+- write_to_file(filePath, content): create or modify a file in the project workspace.
+  You have explicit permission to create brand-new files and folders.
+- run_terminal_command(command): run a shell command inside the sandbox container.
+
+Sandbox constraints (immutable): non-root user 1000:1000, all Linux capabilities
+dropped, read-only root filesystem, 256MB RAM, 0.5 vCPU, only /workspace is writable.
+
+Operating rules:
+1. Work in small, verifiable steps. After writing code, run it or its tests.
+2. Prefer editing existing files over creating duplicates.
+3. Read command output before deciding the next step; fix errors you cause.
+4. When the task is complete and verified, stop and summarize what you did.`;
+
+export const TOOL_DEFS: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "write_to_file",
+      description:
+        "Create or overwrite a file in the sandboxed project workspace. Use for all code additions and modifications. Creating new files/folders is allowed.",
+      parameters: {
+        type: "object",
+        properties: {
+          filePath: { type: "string", description: "Workspace-relative path, e.g. 'src/index.ts'." },
+          content: { type: "string", description: "The full file contents to write." },
+        },
+        required: ["filePath", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "run_terminal_command",
+      description:
+        "Run a shell command inside the sandboxed Docker container (install deps, run tests, build). Returns combined stdout/stderr and exit code.",
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string", description: "Shell command to execute." } },
+        required: ["command"],
+      },
+    },
+  },
+];
+
+/** Per-connection agent state held by the server. */
+export interface AgentState {
+  history: ChatCompletionMessageParam[];
+  stopRequested: boolean;
+  abort: AbortController | null;
+  /** Resolver for an in-flight Copilot approval (resolved by approve_tool). */
+  pendingApproval: ((approve: boolean) => void) | null;
+}
+
+export function newAgentState(): AgentState {
+  return { history: [], stopRequested: false, abort: null, pendingApproval: null };
+}
+
+export interface AgentDeps {
+  config: DaemonConfig;
+  /** Active project directory (the agent's file jail). */
+  workspaceDir: string;
+  /** Copilot gates structural tools behind approval; autopilot runs autonomously. */
+  mode: AgentMode;
+  state: AgentState;
+  send: (m: ServerMessage) => void;
+  /** Runs a command in the sandbox, streaming output to the terminal panel. */
+  runShell: (command: string, agentId: string) => Promise<{ output: string; exitCode: number | null }>;
+  /**
+   * Ask the human to approve a gated tool call (Copilot mode). Emits an
+   * agent_approval event and resolves when the user clicks Approve / Reject.
+   */
+  requestApproval: (toolName: string, summary: string, detail: string) => Promise<boolean>;
+  /** Token meter — charges usage per step and signals when the pool is spent. */
+  meter: Meter;
+}
+
+const MAX_STEPS = 25;
+
+export async function runAgent(promptId: string, prompt: string, deps: AgentDeps): Promise<void> {
+  const { config, state, send } = deps;
+
+  if (!config.deepseekApiKey) {
+    send({
+      type: "error",
+      id: promptId,
+      message: "No DEEPSEEK_API_KEY set in the daemon environment.",
+    });
+    send({ type: "agent_done", id: promptId, reason: "completed" });
+    return;
+  }
+
+  // Metering gate: refuse to start if the monthly pool is already spent.
+  if (deps.meter.isOver()) {
+    const snap = deps.meter.record(0);
+    send({
+      type: "paywall",
+      id: promptId,
+      usage: snap,
+      message: "You've used your monthly agent tokens. Upgrade to keep building.",
+    });
+    send({ type: "agent_done", id: promptId, reason: "stopped" });
+    return;
+  }
+
+  const client = new OpenAI({ apiKey: config.deepseekApiKey, baseURL: config.deepseekBaseUrl });
+
+  state.stopRequested = false;
+  state.abort = new AbortController();
+
+  // Mode directive lives AFTER the cached anchor so switching modes never
+  // invalidates the index-0 prefix that DeepSeek serves from its context cache.
+  const modeNote: ChatCompletionMessageParam = {
+    role: "system",
+    content:
+      deps.mode === "copilot"
+        ? "MODE: COPILOT. You are a passive pair-programmer. Explain, review, and propose. " +
+          "Every write_to_file and run_terminal_command requires explicit human approval before it runs — " +
+          "prefer proposing concrete diffs/commands and let the user approve. Do not assume an action ran until you see its result."
+        : "MODE: AUTOPILOT. You have full autonomy. Chain file writes, install missing packages " +
+          "(npm install via run_terminal_command), run tests/build, read the output, and self-correct until the task is verified complete.",
+  };
+
+  // Static system block pinned at index 0; mode note + history follow.
+  const messages: ChatCompletionMessageParam[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    modeNote,
+    ...state.history,
+    { role: "user", content: prompt },
+  ];
+
+  try {
+    for (let step = 0; step < MAX_STEPS; step++) {
+      if (state.stopRequested) break;
+      send({ type: "agent_status", id: promptId, status: `Step ${step + 1} · contacting model…` });
+
+      const stream = await client.chat.completions.create(
+        {
+          model: config.deepseekModel,
+          messages,
+          tools: TOOL_DEFS,
+          stream: true,
+          stream_options: { include_usage: true },
+        },
+        { signal: state.abort.signal },
+      );
+
+      let assistantText = "";
+      let stepTokens = 0;
+      const toolCalls: Record<number, { id: string; name: string; args: string }> = {};
+
+      for await (const chunk of stream) {
+        if (state.stopRequested) break;
+        if (chunk.usage) stepTokens = chunk.usage.total_tokens;
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.content) {
+          assistantText += delta.content;
+          send({ type: "agent_delta", id: promptId, text: delta.content });
+        }
+        for (const tc of delta?.tool_calls ?? []) {
+          const slot = (toolCalls[tc.index] ??= { id: "", name: "", args: "" });
+          if (tc.id) slot.id = tc.id;
+          if (tc.function?.name) slot.name = tc.function.name;
+          if (tc.function?.arguments) slot.args += tc.function.arguments;
+        }
+      }
+
+      // Charge this step's tokens; halt the pipeline if the pool is now spent.
+      const snap = deps.meter.record(stepTokens);
+      if (snap.limitReached) {
+        send({
+          type: "paywall",
+          id: promptId,
+          usage: snap,
+          message: "Monthly agent tokens exhausted mid-task. Upgrade to continue.",
+        });
+        send({ type: "agent_done", id: promptId, reason: "stopped" });
+        break;
+      }
+
+      const calls = Object.values(toolCalls);
+      messages.push({
+        role: "assistant",
+        content: assistantText || null,
+        tool_calls: calls.length
+          ? calls.map((c) => ({
+              id: c.id,
+              type: "function" as const,
+              function: { name: c.name, arguments: c.args },
+            }))
+          : undefined,
+      });
+
+      if (calls.length === 0) {
+        send({ type: "agent_done", id: promptId, reason: "completed" });
+        break;
+      }
+
+      for (const call of calls) {
+        if (state.stopRequested) break;
+        const result = await executeTool(call.name, call.args, promptId, deps);
+        messages.push({ role: "tool", tool_call_id: call.id, content: result });
+      }
+
+      if (step === MAX_STEPS - 1) {
+        send({ type: "agent_done", id: promptId, reason: "max_steps" });
+      }
+    }
+
+    if (state.stopRequested) {
+      send({ type: "agent_done", id: promptId, reason: "stopped" });
+    }
+  } catch (err) {
+    if (state.stopRequested) {
+      send({ type: "agent_done", id: promptId, reason: "stopped" });
+    } else {
+      send({ type: "error", id: promptId, message: (err as Error).message });
+      send({ type: "agent_done", id: promptId, reason: "completed" });
+    }
+  } finally {
+    // Persist conversation minus the static anchor (idx 0) and the per-turn mode
+    // note (idx 1) so neither accumulates across turns.
+    state.history = messages.slice(2);
+    state.abort = null;
+    state.pendingApproval = null;
+  }
+}
+
+async function executeTool(
+  name: string,
+  rawArgs: string,
+  promptId: string,
+  deps: AgentDeps,
+): Promise<string> {
+  let args: Record<string, unknown> = {};
+  try {
+    args = JSON.parse(rawArgs || "{}");
+  } catch {
+    return "Error: tool arguments were not valid JSON.";
+  }
+
+  switch (name) {
+    case "write_to_file": {
+      const filePath = String(args.filePath ?? "");
+      const content = String(args.content ?? "");
+      const summary = `write_to_file ${filePath}`;
+      // Copilot mode: the write is locked until the human approves it.
+      if (deps.mode === "copilot") {
+        const ok = await deps.requestApproval(name, summary, previewContent(filePath, content));
+        if (!ok) return `The user DECLINED writing ${filePath}. Do not retry; propose an alternative or ask why.`;
+      }
+      deps.send({ type: "agent_tool", id: promptId, toolName: name, summary });
+      await writeFile(deps.workspaceDir, filePath, content);
+      // The fs watcher broadcasts WORKSPACE_CHANGED, refreshing the explorer.
+      return `Wrote ${filePath}.`;
+    }
+
+    case "run_terminal_command": {
+      const command = String(args.command ?? "");
+      const summary = `run_terminal_command: ${command}`;
+      if (deps.mode === "copilot") {
+        const ok = await deps.requestApproval(name, summary, `$ ${command}`);
+        if (!ok) return `The user DECLINED running \`${command}\`. Do not retry; suggest an alternative.`;
+      }
+      deps.send({ type: "agent_tool", id: promptId, toolName: name, summary });
+      const { output, exitCode } = await deps.runShell(command, promptId);
+      const trimmed = output.length > 8000 ? output.slice(-8000) : output;
+      return `exit_code=${exitCode}\n${trimmed}`;
+    }
+
+    default:
+      return `Unknown tool: ${name}`;
+  }
+}
+
+/** Build a compact, readable preview of a file write for the approval card. */
+function previewContent(filePath: string, content: string): string {
+  const capped = content.length > 4000 ? content.slice(0, 4000) + "\n… (truncated)" : content;
+  return `${filePath}\n\n${capped}`;
+}

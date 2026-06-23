@@ -1,0 +1,23 @@
+{
+  "name": "local-docker-web-ide",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Hybrid local-first Docker Web IDE. Browser frontend + local daemon that orchestrates Docker on the user's own hardware.",
+  "workspaces": [
+    "shared",
+    "web",
+    "daemon"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace web run dev",
+    "dev:daemon": "npm --workspace daemon run dev",
+    "build": "npm --workspace shared run build && npm --workspace daemon run build && npm --workspace web run build",
+    "daemon": "npm --workspace daemon run start"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "is-odd": "^3.0.1"
+  }
+}

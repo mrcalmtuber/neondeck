@@ -1,0 +1,37 @@
+# Render Blueprint for NeonDeck. One Docker web service serves web + API + WS +
+# previews on the port Render injects ($PORT). See DEPLOY.md for the full runbook.
+#
+# ⚠ FREE-TIER LIMITS (Render): the free web service SLEEPS after ~15 min idle
+# (cold start on the next request), and the free tier has NO persistent disk —
+# so user projects under IDE_PROJECTS_ROOT are WIPED on every restart/sleep/deploy.
+# For an always-on box with persistent projects, upgrade the plan and uncomment the
+# `disk:` block below (a disk requires a paid instance).
+services:
+  - type: web
+    name: neondeck
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: IDE_DAEMON_HOST
+        value: 0.0.0.0
+      - key: IDE_WEB_DIR
+        value: /app/web/dist
+      - key: IDE_PROJECTS_ROOT
+        value: /data/projects        # ephemeral on free (no disk) — see note above
+      # Secrets / per-deploy values — set these in the Render dashboard (sync:false
+      # means "don't store the value in this file"):
+      - key: AGENT_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: IDE_APP_ORIGIN
+        sync: false                  # https://neondeck.onrender.com (your service URL)
+      - key: IDE_ALLOWED_ORIGINS
+        sync: false                  # same as IDE_APP_ORIGIN
+    # disk:                          # uncomment on a PAID plan for persistent projects
+    #   name: data
+    #   mountPath: /data
+    #   sizeGB: 1
