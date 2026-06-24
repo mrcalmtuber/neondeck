@@ -15,7 +15,7 @@
     "daemon": "npm --workspace daemon run start"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
   },
   "dependencies": {
     "is-odd": "^3.0.1"
