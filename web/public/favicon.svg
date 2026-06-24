@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="NeonDeck">
+  <defs>
+    <linearGradient id="nd-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d1326"/>
+      <stop offset="1" stop-color="#06080f"/>
+    </linearGradient>
+    <linearGradient id="nd-neon" x1="10" y1="6" x2="54" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00f0ff"/>
+      <stop offset="0.52" stop-color="#7928ca"/>
+      <stop offset="1" stop-color="#ff007f"/>
+    </linearGradient>
+    <filter id="nd-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.8" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- app-icon tile -->
+  <rect width="64" height="64" rx="14" fill="url(#nd-bg)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none" stroke="rgba(255,255,255,0.08)"/>
+
+  <!-- stacked neon diamonds (the "deck") -->
+  <g filter="url(#nd-glow)">
+    <path d="M32 22 L46 32 L32 42 L18 32 Z" fill="none" stroke="url(#nd-neon)" stroke-width="2" stroke-linejoin="round" opacity="0.4"/>
+    <path d="M32 7 L57 32 L32 57 L7 32 Z" fill="none" stroke="url(#nd-neon)" stroke-width="3.6" stroke-linejoin="round"/>
+    <path d="M32 19 L45 32 L32 45 L19 32 Z" fill="url(#nd-neon)" opacity="0.92"/>
+  </g>
+</svg>
