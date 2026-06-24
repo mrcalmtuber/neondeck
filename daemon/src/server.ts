@@ -129,7 +129,7 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
       proxy.handleUpgrade(req, socket, head);
       return;
     }
-    verifyOrigin(req.headers.origin, config, (ok, code, message) => {
+    verifyOrigin(req, config, (ok, code, message) => {
       if (!ok) {
         socket.write(`HTTP/1.1 ${code ?? 401} ${message ?? "Unauthorized"}\r\n\r\n`);
         socket.destroy();
@@ -167,12 +167,38 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
   return wss;
 }
 
+function firstHeader(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+/**
+ * Same-origin trust: the request's Origin is the very host the daemon is being
+ * served as (our own web app talking to its own backend). Safe to allow regardless
+ * of the configured allow-list — and it means a single-service deploy (web + API +
+ * WS on one origin, e.g. behind Render) needs NO IDE_ALLOWED_ORIGINS at all.
+ */
+function isSameOrigin(req: IncomingMessage, origin: string | undefined): boolean {
+  if (!origin) return false;
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  if (!originHost) return false;
+  const served = [req.headers.host, firstHeader(req.headers["x-forwarded-host"])];
+  return served.includes(originHost);
+}
+
 function verifyOrigin(
-  origin: string | undefined,
+  req: IncomingMessage,
   config: DaemonConfig,
   done: (ok: boolean, code?: number, message?: string) => void,
 ): void {
-  if (allowedOriginFor(config, origin) !== null) done(true);
+  const origin = req.headers.origin;
+  // Allow if the origin is same-origin (our own served app) OR on the configured
+  // allow-list (cross-origin: separate web host, local Vite dev on :5173, etc.).
+  if (isSameOrigin(req, origin) || allowedOriginFor(config, origin) !== null) done(true);
   else {
     console.warn(`[daemon] rejected connection from origin: ${origin ?? "<none>"}`);
     done(false, 403, "Origin not allowed");

@@ -13,15 +13,18 @@ bottom for Fly / Railway / a VM.
    repo. Render reads `render.yaml` and creates a free Docker web service. (Or **New → Web
    Service → Docker**, free plan, health check path `/api/health`.)
 
-3. **Set the secrets / per-deploy values** (Dashboard → the service → Environment):
+3. **Set the secrets** (Dashboard → the service → Environment) — only two are required:
    - `AGENT_API_KEY` — your DeepSeek key (stays server-side, never shipped to the browser)
-   - `FIREBASE_PROJECT_ID` — e.g. `neondeck-production` (so the handshake requires a real
-     Firebase ID token; **don't** leave auth off on a public URL)
-   - `IDE_APP_ORIGIN` and `IDE_ALLOWED_ORIGINS` — your service URL,
-     `https://<name>.onrender.com` (set after the first deploy reveals the name)
+   - `FIREBASE_PROJECT_ID` — the project your web app uses, **`neondeck-8cbe0`** (must match
+     the web client, or the handshake rejects every login)
+   - `IDE_APP_ORIGIN` / `IDE_ALLOWED_ORIGINS` — **not needed.** The daemon auto-trusts
+     same-origin requests (web + API + WS share one origin). Only set them if you host the
+     web on a different origin, or you turn on real Stripe (then `IDE_APP_ORIGIN` is the
+     checkout return URL).
 
 4. **Deploy.** Then **add `<name>.onrender.com` to Firebase → Authentication → Authorized
-   domains** (Google sign-in needs the domain whitelisted on HTTPS).
+   domains** of the `neondeck-8cbe0` project (Google sign-in needs the domain whitelisted on
+   HTTPS).
 
 5. Open **https://<name>.onrender.com**. The web auto-connects to the daemon same-origin
    (no build config needed); previews render through the same URL.

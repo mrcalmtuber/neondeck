@@ -22,15 +22,15 @@ services:
       - key: IDE_PROJECTS_ROOT
         value: /data/projects        # ephemeral on free (no disk) — see note above
       # Secrets / per-deploy values — set these in the Render dashboard (sync:false
-      # means "don't store the value in this file"):
+      # means "don't store the value in this file"; you'll be prompted on apply):
       - key: AGENT_API_KEY
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
-      - key: IDE_APP_ORIGIN
-        sync: false                  # https://neondeck.onrender.com (your service URL)
-      - key: IDE_ALLOWED_ORIGINS
-        sync: false                  # same as IDE_APP_ORIGIN
+      # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed for this single-service
+      # deploy: the daemon auto-trusts same-origin requests (web + API + WS share one
+      # origin). Only set them if you host the web on a DIFFERENT origin, or you enable
+      # real Stripe (IDE_APP_ORIGIN is the checkout return URL).
     # disk:                          # uncomment on a PAID plan for persistent projects
     #   name: data
     #   mountPath: /data
