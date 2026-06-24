@@ -163,9 +163,32 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
     );
   }
 
+  startKeepAlive();
+
   wss.on("connection", (ws, req) => handleConnection(ws, req, config, proxy, store));
   httpServer.on("close", () => proxy.close());
   return wss;
+}
+
+/**
+ * Self-ping keepalive for sleepy free PaaS tiers. Render's free web service spins
+ * down after ~15 min with no inbound traffic; when RENDER_EXTERNAL_URL is present
+ * (Render injects the live https URL) we hit our own /api/health every 10 min so
+ * the instance stays awake. No-op everywhere else (local dev, an always-on host),
+ * so it costs nothing off Render. As long as the process runs it keeps itself
+ * alive — an external uptime pinger is still more robust if it ever does sleep.
+ * Override/force the target with KEEPALIVE_URL; set it empty to disable.
+ */
+function startKeepAlive(): void {
+  const base = process.env.KEEPALIVE_URL ?? process.env.RENDER_EXTERNAL_URL;
+  if (!base) return;
+  const url = `${base.replace(/\/$/, "")}/api/health`;
+  const PING_MS = 10 * 60 * 1000; // 10 min — under Render's ~15 min idle window
+  const timer = setInterval(() => {
+    fetch(url).catch((err) => console.warn(`[daemon] keepalive ping failed: ${(err as Error).message}`));
+  }, PING_MS);
+  timer.unref?.(); // the HTTP server holds the process open; don't double-hold it
+  console.log(`[daemon] keepalive: self-pinging ${url} every ${PING_MS / 60000} min`);
 }
 
 function firstHeader(v: string | string[] | undefined): string | undefined {
