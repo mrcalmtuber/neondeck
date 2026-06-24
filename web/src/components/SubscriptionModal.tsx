@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { getTier, type Tier } from "@ide/shared";
 import { useStore } from "../lib/store";
+import { daemon } from "../lib/daemonClient";
 import { PlanCards } from "./PlanCards";
 
 /**
- * Local subscription paywall (Feature 4) — also the "Deploy to Web" gate.
+ * Subscription / upgrade modal — opened from the top-right Upgrade button, the
+ * "Deploy to Web" gate, and the public-sharing nudge.
  *
- * Billing is fully simulated: choosing Pro or Max runs a glassmorphic
- * "Processing… via Stripe" loader, then flips the local mock session to the new
- * tier and unlocks its token capacity. No Stripe keys, no network, no blockade.
+ * Choosing a plan goes through REAL Stripe Checkout whenever the daemon is
+ * connected (the daemon itself decides live-vs-mock: live keys → hosted Stripe
+ * checkout; no keys → an instant simulated grant). Only when the daemon isn't
+ * connected do we fall back to a purely local simulation so it never dead-ends.
  */
 export function SubscriptionModal() {
   const open = useStore((s) => s.subscriptionModalOpen);
@@ -17,13 +20,29 @@ export function SubscriptionModal() {
   const simulateUpgrade = useStore((s) => s.simulateUpgrade);
   const [busyTier, setBusyTier] = useState<Tier | null>(null);
   const [success, setSuccess] = useState<Tier | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
-  function startUpgrade(t: Tier) {
+  async function startUpgrade(t: Tier) {
     setBusyTier(t);
     setSuccess(null);
-    // Simulated secure checkout round-trip — no keys, no network.
+    setError(null);
+    // Real Stripe Checkout when connected to the daemon — hand the browser off to
+    // the hosted checkout URL (the daemon returns a mock success URL instead when
+    // no live keys are set, which still completes the round-trip).
+    if (daemon.connected) {
+      try {
+        const url = await daemon.checkout(t);
+        window.location.href = url;
+        return;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+        setBusyTier(null);
+        return;
+      }
+    }
+    // No daemon → local simulation so the upgrade never dead-ends.
     setTimeout(() => {
       simulateUpgrade(t);
       setBusyTier(null);
@@ -46,6 +65,8 @@ export function SubscriptionModal() {
           🔒 Cloud Hosting requires a Pro or Max Membership. Upgrade now to get permanent live URLs
           running on our secure cloud instances!
         </p>
+
+        {error && <div className="auth-error">⚠️ {error}</div>}
 
         <PlanCards currentTier={tier} billingEnabled busyTier={busyTier} onChoose={startUpgrade} />
 
