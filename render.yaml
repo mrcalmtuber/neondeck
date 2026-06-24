@@ -13,7 +13,7 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
-    autoDeploy: false
+    autoDeploy: true                 # every push to the connected branch redeploys
     envVars:
       - key: IDE_DAEMON_HOST
         value: 0.0.0.0
@@ -27,10 +27,21 @@ services:
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
-      # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed for this single-service
-      # deploy: the daemon auto-trusts same-origin requests (web + API + WS share one
-      # origin). Only set them if you host the web on a DIFFERENT origin, or you enable
-      # real Stripe (IDE_APP_ORIGIN is the checkout return URL).
+      # ---- Stripe (real billing). Leave UNSET to keep the simulated upgrade
+      # fallback; set ALL FOUR to take real payments. See DEPLOY.md → "Stripe". ----
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_MAX
+        sync: false
+      # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed: the daemon auto-trusts
+      # same-origin requests (web + API + WS share one origin), and Stripe's checkout
+      # return URL is auto-derived from Render's injected RENDER_EXTERNAL_URL. Only set
+      # IDE_APP_ORIGIN if you serve the web on a DIFFERENT origin (e.g. a custom domain
+      # whose host differs from the onrender.com URL).
     # disk:                          # uncomment on a PAID plan for persistent projects
     #   name: data
     #   mountPath: /data

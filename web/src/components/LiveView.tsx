@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { canPublish, type Tier } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { daemon, DAEMON_HTTP } from "../lib/daemonClient";
 import { termBus } from "../lib/termBus";
@@ -31,6 +32,9 @@ export function LiveView() {
   const transport = useStore((s) => s.transport);
   const tunnel = useStore((s) => s.tunnel);
   const setTunnel = useStore((s) => s.setTunnel);
+  const tier = (useStore((s) => s.usage?.tier) ?? 0) as Tier;
+  const setSubscriptionModalOpen = useStore((s) => s.setSubscriptionModalOpen);
+  const canShare = canPublish(tier);
   const [copied, setCopied] = useState(false);
 
   // Soft-refresh on HMR / build-success broadcasts for our active slot, and keep
@@ -53,6 +57,11 @@ export function LiveView() {
 
   async function share() {
     if (transport !== "daemon") return;
+    // Public sharing is a paid feature — nudge free users to upgrade instead.
+    if (!canShare) {
+      setSubscriptionModalOpen(true);
+      return;
+    }
     setCopied(false);
     setTunnel({ state: "starting", message: "Opening a public link…" });
     try {
@@ -120,9 +129,13 @@ export function LiveView() {
               className="share-btn"
               onClick={share}
               disabled={tunnel.state === "starting"}
-              title="Get a public link to your running app"
+              title={canShare ? "Get a public link to your running app" : "Public sharing is a Pro feature — click to upgrade"}
             >
-              {tunnel.state === "starting" ? "🌐 Connecting…" : "🌐 Share Live Preview"}
+              {tunnel.state === "starting"
+                ? "🌐 Connecting…"
+                : canShare
+                  ? "🌐 Share Live Preview"
+                  : "🔒 Share Live Preview (Pro)"}
             </button>
           )
         )}

@@ -126,8 +126,14 @@ export function loadConfig(argv: string[]): DaemonConfig {
   const allowAllOrigins =
     /^(1|true|yes)$/i.test(process.env.IDE_ALLOW_ALL_ORIGINS ?? "") ||
     allowedOrigins.includes("*");
+  // Where Stripe Checkout returns the browser. Prefer an explicit override; on
+  // Render the platform injects RENDER_EXTERNAL_URL (the live https URL), so real
+  // checkout returns to the deployed site with zero manual config.
   const appOrigin =
-    process.env.IDE_APP_ORIGIN ?? extraOrigins.find((o) => o !== "*") ?? "http://localhost:5173";
+    process.env.IDE_APP_ORIGIN ??
+    process.env.RENDER_EXTERNAL_URL ??
+    extraOrigins.find((o) => o !== "*") ??
+    "http://localhost:5173";
 
   // Base agent model; effort variants fall back to it unless explicitly overridden.
   const agentModel = process.env.AGENT_MODEL ?? process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
@@ -160,7 +166,7 @@ export function loadConfig(argv: string[]): DaemonConfig {
 
     // Auth (Firebase) — ID tokens verified server-side against Google's public
     // certs. The project id is public; no service-account secret is needed.
-    firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? "neondeck-production",
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? "neondeck-8cbe0",
     devTier: parseTier(process.env.IDE_DEV_TIER) ?? 2, // local dev unlocks Max
     trustLoopback: /^(1|true|yes)$/i.test(process.env.IDE_TRUST_LOOPBACK ?? ""),
 

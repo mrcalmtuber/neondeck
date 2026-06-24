@@ -18,9 +18,10 @@ bottom for Fly / Railway / a VM.
    - `FIREBASE_PROJECT_ID` — the project your web app uses, **`neondeck-8cbe0`** (must match
      the web client, or the handshake rejects every login)
    - `IDE_APP_ORIGIN` / `IDE_ALLOWED_ORIGINS` — **not needed.** The daemon auto-trusts
-     same-origin requests (web + API + WS share one origin). Only set them if you host the
-     web on a different origin, or you turn on real Stripe (then `IDE_APP_ORIGIN` is the
-     checkout return URL).
+     same-origin requests (web + API + WS share one origin), and Stripe's checkout return URL
+     is auto-derived from Render's `RENDER_EXTERNAL_URL`. Only set `IDE_APP_ORIGIN` if you
+     serve the web from a *different* host (e.g. a custom domain).
+   - **Stripe** (real billing) — optional; see the **Stripe** section below.
 
 4. **Deploy.** Then **add `<name>.onrender.com` to Firebase → Authentication → Authorized
    domains** of the `neondeck-8cbe0` project (Google sign-in needs the domain whitelisted on
@@ -36,6 +37,67 @@ bottom for Fly / Railway / a VM.
   **wiped on every restart/sleep/deploy**. To keep projects, upgrade to a paid instance and
   uncomment the `disk:` block in `render.yaml` (mount `/data`). Render injects `PORT`
   automatically; the daemon reads it.
+
+## Auto-deploy (push → live)
+
+`render.yaml` sets `autoDeploy: true`, so once the repo is connected, **every push to the
+deployed branch redeploys automatically** — no manual "Deploy latest commit" needed.
+
+- Already created the service before this change? Flip it in the dashboard too:
+  **the service → Settings → Build & Deploy → Auto-Deploy → Yes** (the dashboard value wins
+  over the blueprint for an existing service).
+- Normal workflow now: `git add -A && git commit -m "…" && git push` → Render builds and
+  ships it. Watch progress under the service's **Events / Logs**.
+
+## Stripe (real billing)
+
+The code is already wired end-to-end: real Stripe Checkout, a signature-verified webhook
+(`/api/webhooks/stripe`), and downgrade/cancel. **Until you set the keys below, upgrades fall
+back to a free simulated "upgrade"** (instant tier grant, no charge) — fine for a demo, but
+set these four to take real money:
+
+1. **Create the products/prices** in the Stripe Dashboard (use **Test mode** first):
+   Products → add **Pro** ($10/mo recurring) and **Max** ($20/mo recurring). Copy each
+   **Price ID** (looks like `price_…`).
+2. **Get your secret key:** Developers → API keys → **Secret key** (`sk_test_…`, later
+   `sk_live_…`).
+3. **Add the webhook:** Developers → Webhooks → **Add endpoint** →
+   URL `https://<your-app>.onrender.com/api/webhooks/stripe`. Subscribe to:
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`. Copy the
+   **Signing secret** (`whsec_…`).
+4. **Set the env vars in Render** (the service → Environment — all four `sync:false`, so
+   they're never committed):
+   - `STRIPE_SECRET_KEY` = `sk_…`
+   - `STRIPE_PRICE_PRO` = `price_…` (Pro)
+   - `STRIPE_PRICE_MAX` = `price_…` (Max)
+   - `STRIPE_WEBHOOK_SECRET` = `whsec_…`
+5. **Redeploy.** The checkout **return URL is auto-derived** from Render's
+   `RENDER_EXTERNAL_URL`, so you don't need `IDE_APP_ORIGIN` unless you serve the app from a
+   different host (e.g. a custom domain) — then set `IDE_APP_ORIGIN=https://yourdomain`.
+
+Test it: open the live site → upgrade to Pro → you'll hit Stripe's hosted checkout; pay with
+test card `4242 4242 4242 4242` (any future expiry / CVC). The webhook flips the tier in the
+ledger. Switch to live keys (`sk_live_…` + a live-mode webhook) when you're ready to charge
+real cards.
+
+## Custom domain (is it free?)
+
+**The domain *feature* is free on Render** (custom domains work on the free plan, HTTPS cert
+included). What costs money is *owning a domain name*:
+
+- **$0, keep what you have:** the `…onrender.com` URL is already a real HTTPS address — totally
+  fine for family/personal use.
+- **$0, free subdomain:** services like **`js.org`** (for open-source JS projects, via a PR to
+  their GitHub repo) or **`is-a.dev`** give a free subdomain you point at Render. `.tk/.ml`
+  (Freenom) free domains are effectively dead now — don't rely on them.
+- **~$10/yr, your own domain:** buy from Cloudflare/Namecheap/Porkbun, then in Render: the
+  service → **Settings → Custom Domains → Add** → add your domain → create the **CNAME**
+  record Render shows at your registrar. Cert provisions automatically in a few minutes.
+
+After adding a custom domain, also: (a) add that host to **Firebase → Authentication →
+Authorized domains** (so Google sign-in works), and (b) if it differs from the onrender host,
+set `IDE_APP_ORIGIN=https://yourdomain` so Stripe returns to the right place.
 
 ## Per-user sandboxing / isolation — what you get
 

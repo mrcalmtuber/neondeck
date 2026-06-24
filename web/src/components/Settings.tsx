@@ -201,21 +201,15 @@ export function Settings() {
           <div className="settings-pref">
             <span className="muted small">Reasoning effort</span>
             <div className="settings-seg">
-              {EFFORT_LEVELS.map((level) => {
-                const locked = level === "high" && tier !== 2;
-                return (
-                  <button
-                    key={level}
-                    className={effectiveEffort === level ? "on" : ""}
-                    disabled={locked}
-                    title={locked ? "High effort is exclusive to the Max plan" : undefined}
-                    onClick={() => setAgentEffort(level)}
-                  >
-                    {EFFORT_LABELS[level]}
-                    {locked ? " · Max" : ""}
-                  </button>
-                );
-              })}
+              {EFFORT_LEVELS.map((level) => (
+                <button
+                  key={level}
+                  className={effectiveEffort === level ? "on" : ""}
+                  onClick={() => setAgentEffort(level)}
+                >
+                  {EFFORT_LABELS[level]}
+                </button>
+              ))}
             </div>
           </div>
         </section>

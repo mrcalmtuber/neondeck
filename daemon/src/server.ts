@@ -38,6 +38,7 @@ import { billingEnabled, realStripeConfigured } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
 import {
   canUseDaemonExecution,
+  canPublish,
   getTier,
   effortForTier,
   clampEffortForTier,
@@ -327,12 +328,20 @@ function currentTier(session: Session, config: DaemonConfig, store: UsageStore):
   return store.tierFor(userId, session.authMode === "dev" ? { devTier: config.devTier as Tier } : {});
 }
 
-/** Gate daemon-side execution (Docker/native) on a paid tier. */
+/** Gate daemon-side execution. Every plan can run code; this is a safety net. */
 function requireExecTier(session: Session, config: DaemonConfig, store: UsageStore): void {
   const tier = currentTier(session, config, store);
   if (!canUseDaemonExecution(tier)) {
+    throw new Error(`⛔ The ${getTier(tier).name} plan can't run code on this server.`);
+  }
+}
+
+/** Gate publishing/sharing apps publicly (share links, deploy) — paid plans only. */
+function requirePublishTier(session: Session, config: DaemonConfig, store: UsageStore): void {
+  const tier = currentTier(session, config, store);
+  if (!canPublish(tier)) {
     throw new Error(
-      `⛔ The ${getTier(tier).name} plan runs in your browser only (Level 3). Upgrade to Pro to run code, install packages, and use the agent on the daemon.`,
+      "🔒 Sharing a public link is a Pro feature. Upgrade to Pro or Max to publish & share your app.",
     );
   }
 }
@@ -343,13 +352,11 @@ function makeMeter(
   config: DaemonConfig,
   store: UsageStore,
   send: (m: ServerMessage) => void,
-  // Inline AI (explain/fix) charges at the normal rate; the agent passes the
-  // user's selected effort so Free + Medium can burn 2×.
+  // Effort no longer carries a token penalty on any plan (multiplier is 1×).
   effort: AgentEffort = "low",
 ): Meter {
   const userId = requireAuth(session);
   const tier = currentTier(session, config, store);
-  // Free + Medium burns 2× (both monthly pool and the hidden daily cap).
   const mult = tokenMultiplierForEffort(tier, effort);
   return {
     tier,
@@ -651,6 +658,7 @@ async function handleMessage(
       return send({ type: "git_history", id: msg.id, commits, isRepo });
     }
     case "git_publish": {
+      requirePublishTier(session, config, store);
       const result = await gitPublish(requireWs(session), msg.message, msg.remoteUrl, (s) =>
         send({ type: "terminal_output", id: msg.id, stream: "stdout", data: s }),
       );
@@ -738,9 +746,18 @@ async function handleMessage(
       return send({ type: "db_schema", id: msg.id, dbPath: DB_FILENAME, tables: listTables(db) });
     }
 
-    // ---- Feature 4: zero-config public tunnel ----
+    // ---- Feature 4: zero-config public tunnel (publish/share — paid only) ----
     case "start_tunnel": {
       requireWs(session);
+      if (!canPublish(currentTier(session, config, store))) {
+        return send({
+          type: "tunnel_status",
+          id: msg.id,
+          state: "error",
+          message:
+            "🔒 Public sharing is a Pro feature. Upgrade to Pro or Max to share a live link to your app.",
+        });
+      }
       const port = session.previewPort;
       if (!port) {
         return send({

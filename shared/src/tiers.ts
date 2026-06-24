@@ -17,7 +17,11 @@ export type TierKey = "free" | "pro" | "max";
  * defaults + gating):
  *   low    — bypass/minimize internal reasoning; fast, direct answers.
  *   medium — engage internal reasoning for complex logic/coding/problem-solving.
- *   high   — maximum step-by-step thinking + verification before answering (Max only).
+ *   high   — maximum step-by-step thinking + verification before answering.
+ *
+ * Tiers differ ONLY by price, monthly token allowance, and the ability to
+ * publish/share apps publicly. Every plan (Free included) gets the same real
+ * server-side execution and the full agent at every effort level.
  */
 export type AgentEffort = "low" | "medium" | "high";
 
@@ -51,10 +55,12 @@ export interface TierConfig {
   effort: AgentEffort;
   effortLabel: string;
   effortBlurb: string;
-  /** Execution paths this tier unlocks (the runtime cascade levels). */
+  /** Execution paths this tier unlocks (same for every plan — all run real code). */
   allowedRuntimes: RuntimeMode[];
   /** Name of the env var holding this tier's Stripe price id (null = free). */
   stripePriceEnv: string | null;
+  /** May this tier publish/share apps publicly (share links, deploy)? Paid only. */
+  canPublish: boolean;
   tagline: string;
   perks: string[];
 }
@@ -71,6 +77,16 @@ export const MAX_RESPONSE_TOKENS: Record<AgentEffort, number> = {
   high: 16384,
 };
 
+// Every plan shares the same execution + agent capability. The ONLY differences:
+// price, monthly token allowance, and public publish/share (paid only).
+const FULL_RUNTIMES: RuntimeMode[] = ["DOCKER", "LOCAL_NODE", "BROWSER"];
+const FULL_AGENT = {
+  effort: "medium" as AgentEffort,
+  effortLabel: "Full AI Agent",
+  effortBlurb: "Low, medium & high reasoning effort — all included on every plan.",
+  allowedRuntimes: FULL_RUNTIMES,
+};
+
 export const TIERS: Record<Tier, TierConfig> = {
   0: {
     id: 0,
@@ -80,18 +96,14 @@ export const TIERS: Record<Tier, TierConfig> = {
     priceLabel: "$0",
     tokenLimit: 500_000, // 500K
     tokenLabel: "500K",
-    effort: "low",
-    effortLabel: "Low Effort",
-    effortBlurb:
-      "Fast, direct answers. Medium effort is available too — but it burns your tokens 2× faster.",
-    // Free runs strictly client-side: Level 3 in-browser WebContainers only.
-    allowedRuntimes: ["BROWSER"],
+    ...FULL_AGENT,
     stripePriceEnv: null,
-    tagline: "Tinker in your browser, free forever.",
+    canPublish: false,
+    tagline: "Build and run real apps, free.",
     perks: [
-      "Low-effort agent — fast, direct answers",
+      "Full cloud dev sandboxes — run real apps",
+      "Complete AI agent — every effort level",
       "500K agent tokens / month",
-      "Level 3 — in-browser virtual WebContainers",
       "All editor, package & database panels",
     ],
   },
@@ -103,20 +115,15 @@ export const TIERS: Record<Tier, TierConfig> = {
     priceLabel: "$10",
     tokenLimit: 10_000_000, // 10M
     tokenLabel: "10M",
-    effort: "medium",
-    effortLabel: "Medium Effort",
-    effortBlurb:
-      "Balanced internal reasoning for complex logic and coding — included, no token penalty.",
-    // Pro unlocks the background daemon: Level 1 Docker + Level 2 native host.
-    allowedRuntimes: ["DOCKER", "LOCAL_NODE", "BROWSER"],
+    ...FULL_AGENT,
     stripePriceEnv: "STRIPE_PRICE_PRO",
-    tagline: "Real local execution, 20× the tokens.",
+    canPublish: true,
+    tagline: "Publish & share — 20× the tokens.",
     perks: [
-      "Medium-effort agent — balanced reasoning, included",
-      "10M agent tokens / month",
-      "Docker & Local Daemon Access",
-      "Native local-host execution",
-      "Live preview proxy & public share tunnels",
+      "Everything in Free",
+      "10M agent tokens / month — 20× more",
+      "Publish & share public live URLs",
+      "Permanent live preview links",
     ],
   },
   2: {
@@ -127,19 +134,15 @@ export const TIERS: Record<Tier, TierConfig> = {
     priceLabel: "$20",
     tokenLimit: 30_000_000, // 30M
     tokenLabel: "30M",
-    effort: "medium",
-    effortLabel: "High Effort",
-    effortBlurb:
-      "The only plan that unlocks High effort — maximum step-by-step thinking and verification before answering.",
-    allowedRuntimes: ["DOCKER", "LOCAL_NODE", "BROWSER"],
+    ...FULL_AGENT,
     stripePriceEnv: "STRIPE_PRICE_MAX",
-    tagline: "Peak resources and every premium module.",
+    canPublish: true,
+    tagline: "Peak usage for power users.",
     perks: [
-      "High-effort agent — step-by-step thinking + verification (exclusive)",
-      "30M agent tokens / month",
-      "Peak Resource Allocation",
       "Everything in Pro",
-      "All premium modules unlocked",
+      "30M agent tokens / month — highest limits",
+      "Publish & share public live URLs",
+      "Priority resources",
     ],
   },
 };
@@ -155,23 +158,27 @@ export function effortForTier(id: Tier): AgentEffort {
   return getTier(id).effort;
 }
 
-/** May this tier select the given effort? High is exclusive to Max (tier 2). */
-export function effortAllowedForTier(tier: Tier, effort: AgentEffort): boolean {
-  return effort === "high" ? tier === 2 : true;
+/** May this tier select the given effort? Every effort is available on every plan. */
+export function effortAllowedForTier(_tier: Tier, _effort: AgentEffort): boolean {
+  return true;
 }
 
-/** Clamp a requested effort to what the tier may use (High→Medium for Free/Pro). */
+/** Clamp a requested effort to what the tier may use (no clamping — all allowed). */
 export function clampEffortForTier(tier: Tier, effort: AgentEffort): AgentEffort {
   return effortAllowedForTier(tier, effort) ? effort : "medium";
 }
 
 /**
- * Token-burn multiplier: Free on Medium effort burns 2× as fast (both the monthly
- * pool and the hidden daily cap). Everything else is normal (1×) — Pro/Max are
- * never penalized.
+ * Token-burn multiplier. Always 1× — effort no longer carries a token penalty on
+ * any plan (tiers differ only by price, monthly allowance, and publish/share).
  */
-export function tokenMultiplierForEffort(tier: Tier, effort: AgentEffort): number {
-  return tier === 0 && effort === "medium" ? 2 : 1;
+export function tokenMultiplierForEffort(_tier: Tier, _effort: AgentEffort): number {
+  return 1;
+}
+
+/** May this tier publish/share apps publicly (share links, deploy)? Paid only. */
+export function canPublish(tier: Tier): boolean {
+  return getTier(tier).canPublish;
 }
 
 /** Does this tier unlock the given runtime/execution path? */

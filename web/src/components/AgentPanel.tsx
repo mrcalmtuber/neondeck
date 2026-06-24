@@ -44,11 +44,8 @@ export function AgentPanel() {
   const tier = (useStore((s) => s.usage?.tier) ?? 0) as Tier;
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
-  const transport = useStore((s) => s.transport);
-  const simulateUpgrade = useStore((s) => s.simulateUpgrade);
   const [input, setInput] = useState("");
   const [effortOpen, setEffortOpen] = useState(false);
-  const [showMaxUpsell, setShowMaxUpsell] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Shown effort = the user's pick (or tier default), clamped to the tier ceiling
@@ -59,30 +56,10 @@ export function AgentPanel() {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages]);
 
-  /** Pick an effort; High is Max-only — non-Max clicks open the upsell instead. */
+  /** Pick an effort — every level is available on every plan. */
   function pickEffort(level: AgentEffort) {
-    if (level === "high" && tier !== 2) {
-      setEffortOpen(false);
-      setShowMaxUpsell(true);
-      return;
-    }
     setAgentEffort(level);
     setEffortOpen(false);
-  }
-
-  /** Upsell → purchase Max (same path as the dashboard: real checkout or simulate). */
-  async function upgradeToMax() {
-    setShowMaxUpsell(false);
-    if (transport === "daemon" && daemon.connected) {
-      try {
-        const url = await daemon.checkout(2);
-        window.location.href = url;
-        return;
-      } catch {
-        /* fall through to a local simulation so the upsell never dead-ends */
-      }
-    }
-    simulateUpgrade(2);
   }
 
   function submit() {
@@ -204,12 +181,6 @@ export function AgentPanel() {
         </div>
       )}
 
-      {tier === 0 && effectiveEffort === "medium" && (
-        <div className="effort-warning">
-          ⚠ Medium effort doubles token usage — your limit burns 2× as fast.
-        </div>
-      )}
-
       <div className="agent-input">
         <textarea
           value={input}
@@ -248,20 +219,16 @@ export function AgentPanel() {
               <>
                 <div className="menu-scrim" onClick={() => setEffortOpen(false)} />
                 <div className="effort-dropdown">
-                  {EFFORT_LEVELS.map((level) => {
-                    const locked = level === "high" && tier !== 2;
-                    return (
-                      <button
-                        key={level}
-                        className={`effort-row ${effectiveEffort === level ? "active" : ""} ${locked ? "locked" : ""}`}
-                        onClick={() => pickEffort(level)}
-                      >
-                        <span>{EFFORT_LABELS[level]}</span>
-                        {level === "high" && <span className="effort-badge">MAX ONLY</span>}
-                        {effectiveEffort === level && <span className="effort-check">✓</span>}
-                      </button>
-                    );
-                  })}
+                  {EFFORT_LEVELS.map((level) => (
+                    <button
+                      key={level}
+                      className={`effort-row ${effectiveEffort === level ? "active" : ""}`}
+                      onClick={() => pickEffort(level)}
+                    >
+                      <span>{EFFORT_LABELS[level]}</span>
+                      {effectiveEffort === level && <span className="effort-check">✓</span>}
+                    </button>
+                  ))}
                 </div>
               </>
             )}
@@ -269,27 +236,6 @@ export function AgentPanel() {
         </div>
       </div>
 
-      {/* Non-Max user tried to pick High effort → offer to purchase Max. */}
-      {showMaxUpsell && (
-        <div className="modal-backdrop" onClick={() => setShowMaxUpsell(false)}>
-          <div className="max-upsell" onClick={(e) => e.stopPropagation()}>
-            <div className="max-upsell-icon">🔒</div>
-            <h3>High effort is a Max feature</h3>
-            <p className="muted">
-              Upgrade to the Max plan to unlock High effort — maximum step-by-step thinking and
-              verification before the agent answers.
-            </p>
-            <div className="max-upsell-actions">
-              <button className="btn-max wide" onClick={upgradeToMax}>
-                ⚡ Upgrade to Max
-              </button>
-              <button className="btn-ghost" onClick={() => setShowMaxUpsell(false)}>
-                Not now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
