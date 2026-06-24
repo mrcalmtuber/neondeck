@@ -77,6 +77,56 @@ export async function createCheckoutSession(
 }
 
 /**
+ * Reconcile a user's tier from Stripe (the source of truth) — survives a wiped
+ * ledger (Render free has no persistent disk) and a webhook that landed under a
+ * different key. Finds the Stripe customer by account email, reads their active
+ * subscription, and writes the tier into the ledger. Returns the tier it found,
+ * or null when there's nothing to apply (no live Stripe, no email, or no active
+ * subscription). Safe to call on every connect — it only ever upgrades from the
+ * stored tier, never downgrades a user who's mid-session.
+ */
+export async function reconcileTierFromStripe(
+  config: DaemonConfig,
+  store: UsageStore,
+  opts: { userId: string; email: string | null },
+): Promise<Tier | null> {
+  if (!realStripeConfigured(config)) return null;
+  if (!opts.email) return null; // need an email to locate the Stripe customer
+  const s = stripe(config);
+
+  let best: Tier | null = null;
+  let bestCustomer: string | undefined;
+  let bestSub: string | undefined;
+
+  // A customer is keyed by email; there can be more than one. Check each for a
+  // live subscription and keep the highest tier found.
+  const customers = await s.customers.list({ email: opts.email, limit: 10 });
+  for (const c of customers.data) {
+    const subs = await s.subscriptions.list({ customer: c.id, status: "all", limit: 20 });
+    for (const sub of subs.data) {
+      if (sub.status !== "active" && sub.status !== "trialing") continue;
+      // Prefer the tier we stamped into the subscription's metadata at checkout
+      // (independent of the STRIPE_PRICE_* env); fall back to a price-id lookup.
+      const metaTier = Number(sub.metadata?.tier);
+      const tier =
+        metaTier === 1 || metaTier === 2
+          ? (metaTier as Tier)
+          : tierForPriceId(sub.items.data[0]?.price?.id ?? "", resolveEnv(config));
+      if (tier && (best === null || tier > best)) {
+        best = tier;
+        bestCustomer = c.id;
+        bestSub = sub.id;
+      }
+    }
+  }
+
+  if (best !== null && best > store.tierFor(opts.userId)) {
+    store.setTier(opts.userId, best, { customerId: bestCustomer, subscriptionId: bestSub });
+  }
+  return best;
+}
+
+/**
  * Downgrade a user to a LOWER tier (incl. Free). Rejects upgrades — those go
  * through Checkout so they're paid for. With mock Stripe it just adjusts the
  * ledger; with live Stripe it updates/cancels the subscription (the webhook also

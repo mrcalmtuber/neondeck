@@ -3,7 +3,13 @@ import type { Tier } from "@ide/shared";
 import { allowedOriginFor, loopbackDevAllowed, type DaemonConfig } from "./config.js";
 import type { UsageStore } from "./usage.js";
 import { authenticate, authConfigured } from "./auth.js";
-import { billingEnabled, createCheckoutSession, changeTier, handleWebhook } from "./billing.js";
+import {
+  billingEnabled,
+  createCheckoutSession,
+  changeTier,
+  handleWebhook,
+  reconcileTierFromStripe,
+} from "./billing.js";
 
 /**
  * Minimal HTTP API mounted on the same host/port as the WebSocket (default
@@ -97,6 +103,15 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
       // ---- Current tier + usage ----
       if (path === "/api/me" && req.method === "GET") {
         const user = await authenticate(config, bearer(req), { allowLoopbackDev });
+        // Stripe is the source of truth — reconcile before reading (this is the
+        // call the app makes on return from Checkout, so the upgrade lands here
+        // even if the webhook/ledger missed it). Best-effort; never blocks /me.
+        if (user.mode === "firebase") {
+          await reconcileTierFromStripe(config, store, {
+            userId: user.userId,
+            email: user.email,
+          }).catch(() => null);
+        }
         const tier = store.tierFor(user.userId, user.mode === "dev" ? { devTier: config.devTier as Tier } : {});
         return json(res, 200, { userId: user.userId, tier, usage: store.snapshot(user.userId, tier) });
       }

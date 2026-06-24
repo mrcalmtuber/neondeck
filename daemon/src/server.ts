@@ -34,7 +34,7 @@ import {
 import { openTunnel, type TunnelHandle } from "./tunnel.js";
 import { authenticate, authConfigured, userRoot, type AuthMode } from "./auth.js";
 import { UsageStore, type Meter } from "./usage.js";
-import { billingEnabled, realStripeConfigured } from "./billing.js";
+import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
 import {
   canUseDaemonExecution,
@@ -398,7 +398,7 @@ async function handleMessage(
 
       const tier = currentTier(session, config, store);
       session.runtimeMode = await detectMode(session.forced);
-      return send({
+      send({
         type: "hello_ok",
         id: msg.id,
         protocolVersion: PROTOCOL_VERSION,
@@ -415,6 +415,21 @@ async function handleMessage(
         usage: store.snapshot(user.userId, tier),
         billingEnabled: billingEnabled(config),
       });
+
+      // Stripe is the source of truth for the tier. Reconcile in the background
+      // (handles a wiped ledger on a diskless host, or a webhook that landed under
+      // a different key); if it changes the tier, push a live usage_update so the
+      // UI upgrades without a manual refresh.
+      if (user.mode === "firebase") {
+        reconcileTierFromStripe(config, store, { userId: user.userId, email: user.email })
+          .then((found) => {
+            if (found !== null && found !== tier) {
+              send({ type: "usage_update", id: "broadcast", usage: store.snapshot(user.userId, found) });
+            }
+          })
+          .catch((err) => console.warn("[billing] tier reconcile failed:", (err as Error).message));
+      }
+      return;
     }
 
     // ---- Hub / projects (scoped to the authenticated user's root) ----
