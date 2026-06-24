@@ -3045,18 +3045,6 @@ textarea:focus-visible {
   height: 8px;
 }
 
-@media (max-width: 720px) {
-  .dash-tab-label {
-    display: none;
-  }
-  .dash-sidebar {
-    width: 64px;
-  }
-  .hero-title {
-    font-size: 30px;
-  }
-}
-
 /* ===================================================================== */
 /* Mobile / small-screen layout                                          */
 /* ===================================================================== */
@@ -3113,9 +3101,46 @@ textarea:focus-visible {
   .conn-sub,
   .topbar-spacer { display: none; }
 
-  /* ---- Dashboard / templates ---- */
-  .template-grid { grid-template-columns: 1fr; }
-  .dash-header { flex-wrap: wrap; gap: 8px; }
+  /* ---- Dashboard: left rail → bottom tab bar, full-width content ---- */
+  .dashboard { flex-direction: column; }
+  .dash-main { order: 1; flex: 1; min-height: 0; }
+  .dash-sidebar {
+    order: 2;
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+  .dash-brand { display: none; } /* reclaim room on the bottom bar */
+  .dash-nav { flex-direction: row; gap: 4px; }
+  .dash-tab { flex: 1; padding: 7px 4px; gap: 3px; border-radius: 10px; }
+  .dash-tab-icon { font-size: 19px; }
+  .dash-tab-label { display: block; font-size: 10px; } /* re-show under each icon */
+
+  .dash-header { padding: 11px 14px; flex-wrap: wrap; gap: 8px; }
+  .dash-content { padding: 20px 14px 28px; }
+
+  /* compact account bar so the header never overflows the screen */
+  .account-bar { gap: 8px; }
+  .profile-email { display: none; }            /* avatar only on phones */
+  .account-bar .btn-ghost.sm { display: none; } /* Sign out lives in Settings */
+
+  /* home hero + prompt sized for a phone */
+  .hero { margin: 8px 0 26px; }
+  .hero-title { font-size: 26px; margin-bottom: 16px; }
+  .hero-subtext { font-size: 12.5px; }
+  .prompt-box { padding: 12px; }
+
+  /* one card per row */
+  .template-grid,
+  .card-grid { grid-template-columns: 1fr; }
+
+  /* billing: stack the summary + stop the usage meter forcing sideways scroll */
+  .dash-billing-summary { flex-direction: column; align-items: stretch; }
+  .dash-billing .dash-usage { min-width: 0; width: 100%; }
 
   /* ---- Modals fit the viewport ---- */
   .modal,
