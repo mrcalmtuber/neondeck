@@ -99,6 +99,41 @@ After adding a custom domain, also: (a) add that host to **Firebase → Authenti
 Authorized domains** (so Google sign-in works), and (b) if it differs from the onrender host,
 set `IDE_APP_ORIGIN=https://yourdomain` so Stripe returns to the right place.
 
+### Cloudflare-registered domain, hosted on Render (step by step)
+
+You buy the name from **Cloudflare** but keep **everything on Render** — Cloudflare is only the
+registrar + a DNS pointer, not a second host and not a proxy in front of your app.
+
+1. **Buy the domain** at Cloudflare → **Domain Registration → Register Domains**. Registering
+   through Cloudflare automatically puts the domain on Cloudflare's DNS — that's required and
+   fine; you'll only use it to point at Render.
+2. **Add the domain in Render:** the service → **Settings → Custom Domains → Add Custom Domain**
+   → enter your host, e.g. `app.yourdomain.com` (and/or the apex `yourdomain.com`). Render shows
+   the DNS target to create (it'll be `neondeck.onrender.com`).
+3. **Create the DNS record in Cloudflare** (dash → your domain → **DNS → Records → Add record**):
+   - subdomain (e.g. `app`) → **CNAME** → `neondeck.onrender.com`
+   - apex (`yourdomain.com`) → **CNAME** → `neondeck.onrender.com` (Cloudflare flattens apex
+     CNAMEs automatically, so this is allowed)
+   - **Proxy status = DNS only (grey cloud)** so traffic goes straight to Render and **Render
+     issues the HTTPS cert**. (Orange-cloud proxy also works, but then set Cloudflare **SSL/TLS
+     → Full** to avoid redirect loops. Grey cloud is the no-fuss choice when Render is the host.)
+4. **Wait for the cert.** Render auto-provisions HTTPS in a few minutes; the domain row flips to
+   **"Certificate Issued"**. Then `https://app.yourdomain.com` serves the whole app.
+5. **Whitelist the host for sign-in** (required): Firebase → project **`neondeck-8cbe0`** →
+   Authentication → **Settings → Authorized domains → Add domain** → your custom host. Without
+   this, Google sign-in fails on the new URL.
+6. **(Optional) Point Stripe at the new host:** in Render → Environment set
+   `IDE_APP_ORIGIN=https://app.yourdomain.com` and redeploy, so checkout returns the user to the
+   custom domain instead of `…onrender.com`. The webhook can stay on the onrender.com URL.
+
+**No `IDE_ALLOWED_ORIGINS` needed.** Web + API + WebSocket all come from the one custom-domain
+origin, and the daemon auto-trusts same-origin requests (`isSameOrigin` in `daemon/src/server.ts`
+matches the request's `Origin` against the served `Host`/`X-Forwarded-Host`). You only add
+origins when the web is served from a *different* host than the daemon.
+
+**Cost:** the domain is ≈ **$10/yr** (Cloudflare sells at wholesale, no markup); the Render
+custom domain + auto HTTPS cert and Cloudflare DNS are **free**.
+
 ## Per-user sandboxing / isolation — what you get
 
 | Layer | Status | Notes |
