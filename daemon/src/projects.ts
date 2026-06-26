@@ -18,6 +18,16 @@ export function resolveProject(projectsRoot: string, name: string): string {
   return abs;
 }
 
+/** True only if the named project actually exists as a directory on disk. */
+export function projectExists(projectsRoot: string, name: string): boolean {
+  try {
+    const abs = resolveProject(projectsRoot, name);
+    return fs.existsSync(abs) && fs.statSync(abs).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function listProjects(projectsRoot: string): ProjectInfo[] {
   fs.mkdirSync(projectsRoot, { recursive: true });
   const entries = fs.readdirSync(projectsRoot, { withFileTypes: true });
@@ -46,7 +56,9 @@ interface BlueprintDef {
 
 const BLUEPRINTS: Record<Blueprint, BlueprintDef> = {
   blank: {
-    files: { "README.md": "# New Project\n\nAn empty canvas. Start building!\n" },
+    // No seed files — provisioning writes the real starter/template files, so a
+    // blank project isn't littered with a stray README.
+    files: {},
   },
 
   "react-vite": {

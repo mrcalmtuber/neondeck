@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { formatTokens, getTier, type Tier } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
-import { listUserProjects } from "../lib/projectsService";
-import { listLocalProjects, recordLocalProject } from "../lib/projectsLocal";
+import { listLocalProjects, recordLocalProject, removeLocalProject } from "../lib/projectsLocal";
 import { TEMPLATES, type Template } from "../lib/templates";
 import { provisionBlankProject, provisionTemplate } from "../lib/provision";
 import { ThemeMenu } from "./ThemeMenu";
@@ -209,31 +208,37 @@ function ProjectsPanel({ onCreate }: { onCreate: () => void }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      // Merge every source so a created project always shows, regardless of
-      // transport / blocked Firestore: the local-first index + the daemon's
-      // on-disk workspaces (daemon mode) + Firestore (real signed-in session).
-      // Deduped by name; the local index gives the friendly subtitle.
-      const byName = new Map<string, ProjectCard>();
-      const add = (name: string, subtitle: string) => {
-        if (!byName.has(name)) byName.set(name, { name, subtitle });
+      // The daemon is the SOURCE OF TRUTH: only projects that actually exist on
+      // the server are shown (and therefore openable). We enrich their subtitles
+      // from the local index (friendly idea/template names). This stops phantom
+      // projects — names left in localStorage/Firestore after a diskless redeploy
+      // wiped /data — from appearing as openable and sending you to the wrong one.
+      const localByName = new Map(listLocalProjects().map((p) => [p.name, p]));
+      const subtitleFor = (name: string, fallback: string) => {
+        const l = localByName.get(name);
+        return l ? (l.template ? `🔥 ${l.template}` : l.idea || fallback) : fallback;
       };
 
-      for (const p of listLocalProjects()) {
-        add(p.name, p.template ? `🔥 ${p.template}` : p.idea || "Project");
-      }
       if (transport === "daemon" && daemon.connected) {
         try {
-          for (const x of await daemon.listProjects()) add(x.name, `${x.entryCount} items`);
+          const list = await daemon.listProjects();
+          const cards = list.map((x) => ({
+            name: x.name,
+            subtitle: subtitleFor(x.name, `${x.entryCount} items`),
+          }));
+          if (alive) setProjects(cards);
+          return;
         } catch {
-          /* keep whatever the local index gave us */
+          /* fall through to the local index below */
         }
       }
-      if (userId && token) {
-        for (const r of await listUserProjects(userId)) {
-          add(r.name, r.template ? `🔥 ${r.template}` : r.idea || "Project");
-        }
-      }
-      if (alive) setProjects([...byName.values()]);
+      // Not connected: show the local history so the tab isn't empty (opening
+      // one will prompt to reconnect).
+      const local = listLocalProjects().map((p) => ({
+        name: p.name,
+        subtitle: p.template ? `🔥 ${p.template}` : p.idea || "Project",
+      }));
+      if (alive) setProjects(local);
     })();
     return () => {
       alive = false;
@@ -245,19 +250,31 @@ function ProjectsPanel({ onCreate }: { onCreate: () => void }) {
     setOpeningName(name);
     setError(null);
     const s = useStore.getState();
+    // Optimistic: set the target NOW so a concurrent reconnect re-opens THIS
+    // project, not whatever was open before (the old "wrong project" race).
+    s.setActiveProject(name);
     try {
       if (!daemon.connected) throw new Error("Not connected to the workspace daemon — reconnect and try again.");
-      const { root } = await daemon.openProject(name);
-      recordLocalProject({ name, transport }); // keep the index fresh on open
-      s.setActiveProject(name);
+      // Bind to the workspace the daemon ACTUALLY opened, not the requested name.
+      const { workspaceName, root } = await daemon.openProject(name);
+      recordLocalProject({ name: workspaceName, transport });
+      s.setActiveProject(workspaceName);
       s.setTree(root);
       s.setOpenFile("", "");
       s.setPreview(null, null); // clear any prior project's running preview
       s.resetChat();
       s.setView("ide");
     } catch (err) {
-      // Stay on the Projects tab and explain — never drop into an empty IDE.
-      setError(`Couldn't open "${name}": ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("PROJECT_NOT_FOUND")) {
+        // The server no longer has it (diskless redeploy) — prune the phantom so
+        // it stops showing, and refresh the list.
+        removeLocalProject(name);
+        s.bumpProjects();
+        setError(`"${name}" no longer exists on the server — removed it from your list.`);
+      } else {
+        setError(`Couldn't open "${name}": ${msg}`);
+      }
       setOpeningName(null);
     }
   }

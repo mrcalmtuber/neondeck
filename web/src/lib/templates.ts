@@ -136,7 +136,7 @@ type();
         `<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script type="text/babel" src="app.jsx"></script>`,
+<script type="text/babel" data-presets="react" src="app.jsx"></script>`,
       ),
       "app.jsx": `function App() {
   const [n, setN] = React.useState(0);

@@ -1,5 +1,6 @@
 import { daemon } from "./daemonClient";
 import { useStore } from "./store";
+import { sendPrompt } from "./agent";
 import { saveProjectRecord } from "./projectsService";
 import { recordLocalProject } from "./projectsLocal";
 import type { Template } from "./templates";
@@ -62,8 +63,9 @@ async function uniqueProjectName(base: string): Promise<string> {
 
 /** A tiny, self-rendering blank scaffold so a new project is never empty and is
  *  immediately runnable (the built-in static "Run" needs an index.html). */
-function blankFiles(idea: string): Record<string, string> {
-  const title = idea.trim() || "My NeonDeck Project";
+function blankFiles(): Record<string, string> {
+  // Neutral starter — the user's idea drives the AGENT, not this page's heading.
+  const title = "My NeonDeck Project";
   return {
     "index.html": `<!doctype html>
 <html lang="en">
@@ -147,11 +149,18 @@ export async function provisionBlankProject(idea: string): Promise<void> {
   const name = await uniqueProjectName(slugify(idea));
   await daemon.createProject(name, "blank");
   await daemon.openProject(name);
-  // Seed a self-rendering starter page so the project is runnable immediately.
-  for (const [path, content] of Object.entries(blankFiles(idea))) {
+  // Seed a neutral starter page so the project is runnable immediately.
+  for (const [path, content] of Object.entries(blankFiles())) {
     await daemon.manualUpdate(path, content);
   }
   const root = await daemon.listTree();
   enterIde(name, root);
   recordProject(name, { idea });
+
+  // Pre-fire the idea to the agent so the workspace opens with the build already
+  // underway — instead of the idea just sitting as static text in the preview.
+  const task = idea.trim();
+  if (task && useStore.getState().agentReady) {
+    sendPrompt(task);
+  }
 }

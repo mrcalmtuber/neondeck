@@ -38,7 +38,7 @@ export const EFFORT_LABELS: Record<AgentEffort, string> = {
  * "usage-based pricing" when hit — never shown as a number). Separate from the
  * monthly pool (TierConfig.tokenLimit).
  */
-export const FREE_DAILY_TOKEN_CAP = 100_000;
+export const FREE_DAILY_TOKEN_CAP = 1_000_000;
 
 export interface TierConfig {
   id: Tier;
@@ -94,8 +94,8 @@ export const TIERS: Record<Tier, TierConfig> = {
     name: "Free",
     priceUsd: 0,
     priceLabel: "$0",
-    tokenLimit: 500_000, // 500K
-    tokenLabel: "500K",
+    tokenLimit: 5_000_000, // 5M
+    tokenLabel: "5M",
     ...FULL_AGENT,
     stripePriceEnv: null,
     canPublish: false,
@@ -103,7 +103,7 @@ export const TIERS: Record<Tier, TierConfig> = {
     perks: [
       "Full cloud dev sandboxes — run real apps",
       "Complete AI agent — every effort level",
-      "500K agent tokens / month",
+      "5M agent tokens / month",
       "All editor, package & database panels",
     ],
   },
@@ -118,10 +118,10 @@ export const TIERS: Record<Tier, TierConfig> = {
     ...FULL_AGENT,
     stripePriceEnv: "STRIPE_PRICE_PRO",
     canPublish: true,
-    tagline: "Publish & share — 20× the tokens.",
+    tagline: "Publish & share your apps live.",
     perks: [
       "Everything in Free",
-      "10M agent tokens / month — 20× more",
+      "10M agent tokens / month",
       "Publish & share public live URLs",
       "Permanent live preview links",
     ],

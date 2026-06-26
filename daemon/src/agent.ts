@@ -307,7 +307,7 @@ async function executeTool(
     case "write_to_file": {
       const filePath = String(args.filePath ?? "");
       const content = String(args.content ?? "");
-      const summary = `write_to_file ${filePath}`;
+      const summary = stepSummary(name, args);
       // Copilot mode: the write is locked until the human approves it.
       if (deps.mode === "copilot") {
         const ok = await deps.requestApproval(name, summary, previewContent(filePath, content));
@@ -325,7 +325,7 @@ async function executeTool(
       if (!deps.canRunCommands) {
         return "Shell command execution is not available on the user's current plan (Pro+ only). Do not retry; write the necessary files instead and suggest upgrading to Pro to run commands.";
       }
-      const summary = `run_terminal_command: ${command}`;
+      const summary = stepSummary(name, args);
       if (deps.mode === "copilot") {
         const ok = await deps.requestApproval(name, summary, `$ ${command}`);
         if (!ok) return `The user DECLINED running \`${command}\`. Do not retry; suggest an alternative.`;
@@ -339,6 +339,41 @@ async function executeTool(
     default:
       return `Unknown tool: ${name}`;
   }
+}
+
+/**
+ * A friendly, one-sentence description of a tool step (shown in the agent chat
+ * instead of the raw command/path). Heuristic — no extra model call.
+ */
+function stepSummary(name: string, args: Record<string, unknown>): string {
+  if (name === "write_to_file") {
+    const fp = String(args.filePath ?? "file");
+    const base = fp.split("/").pop() || fp;
+    const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
+    const what =
+      ext === "html" ? "building the page" :
+      ext === "css" ? "styling the look" :
+      ext === "js" || ext === "jsx" || ext === "ts" || ext === "tsx" || ext === "py" ? "writing the code" :
+      ext === "json" ? "setting up config" :
+      ext === "md" ? "writing notes" :
+      "creating the file";
+    return `Writing ${base} — ${what}.`;
+  }
+  if (name === "run_terminal_command") {
+    const c = String(args.command ?? "").trim().toLowerCase();
+    if (/\b(npm (ci|install|i)|yarn (install|add)|pnpm (install|add)|pip install)\b/.test(c))
+      return "Installing the project's dependencies.";
+    if (/\b(npm run build|vite build|tsc|next build|webpack)\b/.test(c))
+      return "Building the project.";
+    if (/\b(npm (run )?(dev|start)|vite|next dev|node .*serve|flask run|uvicorn|python -m http)\b/.test(c))
+      return "Starting the app's server.";
+    if (/^git\b/.test(c)) return "Saving the changes to git.";
+    if (/\b(mkdir|touch|cp |mv |rm |ls|cat )\b/.test(c)) return "Organizing the project files.";
+    if (/\b(curl|wget)\b/.test(c)) return "Fetching a resource from the web.";
+    if (/^(node|python|deno|bun)\b/.test(c)) return "Running the program.";
+    return "Running a setup step.";
+  }
+  return "Working on the next step.";
 }
 
 /** Build a compact, readable preview of a file write for the approval card. */

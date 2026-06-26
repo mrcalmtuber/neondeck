@@ -104,7 +104,7 @@ export function AuthGateway() {
         <p className="subtitle">
           {mode === "login"
             ? "Sign in to open your private workspaces."
-            : "Start free — 500K agent tokens every month, no card required."}
+            : "Start free — 5M agent tokens every month, no card required."}
         </p>
 
         <form onSubmit={submit} className="auth-form">

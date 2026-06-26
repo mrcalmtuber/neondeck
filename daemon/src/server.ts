@@ -16,7 +16,7 @@ import { watchWorkspace, type Watcher } from "./watcher.js";
 import { createProxyRouter, PREVIEW_PREFIX, type ProxyRouter } from "./proxy.js";
 import { makeWebHandler } from "./webStatic.js";
 import { runAgent, newAgentState, type AgentState } from "./agent.js";
-import { listProjects, createProject, resolveProject, projectInfo } from "./projects.js";
+import { listProjects, createProject, resolveProject, projectInfo, projectExists } from "./projects.js";
 import { gitLog, gitPublish } from "./git.js";
 import { explain, fix } from "./ai.js";
 import { ProcRegistry, sampleRam } from "./procs.js";
@@ -479,7 +479,19 @@ async function handleMessage(
     }
 
     case "open_project": {
-      const dir = resolveProject(requireProjectRoot(session), msg.name);
+      const root = requireProjectRoot(session);
+      // The project must actually exist on disk. On a diskless host (Render free)
+      // a redeploy wipes /data, so a name from a stale client list may be gone —
+      // return a precise error (prefixed PROJECT_NOT_FOUND so the client can prune
+      // its local index) instead of letting buildTree throw a generic ENOENT.
+      if (!projectExists(root, msg.name)) {
+        return send({
+          type: "error",
+          id: msg.id,
+          message: `PROJECT_NOT_FOUND: "${msg.name}" no longer exists on the server.`,
+        });
+      }
+      const dir = resolveProject(root, msg.name);
       // Switching projects: tear down the previous project's preview so its
       // server doesn't keep holding the port / showing through the proxy.
       stopPreview(session, proxy);
