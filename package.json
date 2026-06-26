@@ -1,8 +1,9 @@
 {
-  "name": "local-docker-web-ide",
+  "name": "neondeck",
   "private": true,
   "version": "0.1.0",
-  "description": "Hybrid local-first Docker Web IDE. Browser frontend + local daemon that orchestrates Docker on the user's own hardware.",
+  "description": "NeonDeck — a browser-based AI coding IDE: chat-driven agent, live preview, and one-click deploy. Single-port web + daemon + WebSocket with sandboxed runtimes.",
+  "license": "UNLICENSED",
   "workspaces": [
     "shared",
     "web",
@@ -16,8 +17,5 @@
   },
   "engines": {
     "node": ">=22.5"
-  },
-  "dependencies": {
-    "is-odd": "^3.0.1"
   }
 }

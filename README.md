@@ -1,5 +1,12 @@
 # NeonDeck
 
+[![Live](https://img.shields.io/badge/live-neondeck.onrender.com-ff007f)](https://neondeck.onrender.com)
+[![License](https://img.shields.io/badge/license-Proprietary-red)](./LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-646cff?logo=vite&logoColor=white)
+![Deploy](https://img.shields.io/badge/deploy-Render-46e3b7?logo=render&logoColor=white)
+
 A hybrid web IDE. The UI runs as a normal website; code, files, and Docker
 containers execute on the **daemon** node — your own machine for local dev, or a
 headless server (e.g. a Raspberry Pi 5) for a shared production deployment. The
