@@ -5,6 +5,7 @@ import { ErrorWatcher } from "./ErrorWatcher";
 import { ApprenticeAlert } from "./ApprenticeAlert";
 import { Workspace } from "./Workspace";
 import { TemplateHub } from "./TemplateHub";
+import { ProjectTour, TOUR_SEEN_KEY } from "./ProjectTour";
 import { useEffect } from "react";
 import { useStore } from "../lib/store";
 import { ws } from "../lib/workspaceService";
@@ -27,6 +28,17 @@ export function Layout() {
 
   // Real-time file tree: redraw on any workspace change.
   useEffect(() => ws.onTreeChange(setTree), [setTree, transport]);
+
+  // First time inside a project, kick off the friendly walkthrough.
+  useEffect(() => {
+    let seen = false;
+    try {
+      seen = localStorage.getItem(TOUR_SEEN_KEY) === "done";
+    } catch {
+      /* private mode — just show it */
+    }
+    if (!seen) useStore.getState().setTourOpen(true);
+  }, []);
 
   return (
     <div className="ide">
@@ -53,6 +65,9 @@ export function Layout() {
       <TemplateHub />
 
       <Workspace />
+
+      {/* First-run interactive walkthrough (replayable from Settings). */}
+      <ProjectTour />
 
       {/* Friendly floating build-error alert (the only error surface now). */}
       <ApprenticeAlert />

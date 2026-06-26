@@ -3046,6 +3046,96 @@ textarea:focus-visible {
 }
 
 /* ===================================================================== */
+/* First-run project tour (friendly walkthrough, ages 9–90)              */
+/* ===================================================================== */
+.tour-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(4, 6, 12, 0.55);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.tour-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  margin-bottom: 6vh;
+  border-radius: 18px;
+  border: 1px solid var(--accent3);
+  padding: 26px 24px 20px;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(121, 40, 202, 0.25), 0 18px 60px rgba(0, 0, 0, 0.55),
+    0 0 50px rgba(121, 40, 202, 0.35);
+  animation: tour-pop 0.22s ease;
+}
+@keyframes tour-pop {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.tour-skip {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 6px;
+}
+.tour-skip:hover { color: var(--text); }
+.tour-emoji { font-size: 44px; line-height: 1; margin-bottom: 10px; }
+.tour-title {
+  font-size: 21px;
+  margin: 0 0 8px;
+  background: linear-gradient(92deg, var(--accent), #fff 45%, var(--accent2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.tour-body {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0 auto 18px;
+  max-width: 340px;
+}
+.tour-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.tour-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--border);
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.tour-dot.active {
+  background: var(--accent);
+  transform: scale(1.25);
+  box-shadow: 0 0 10px var(--accent);
+}
+.tour-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tour-actions button {
+  flex: 1;
+  padding: 11px 14px;
+  border-radius: 11px;
+  font-weight: 700;
+}
+
+/* ===================================================================== */
 /* Mobile / small-screen layout                                          */
 /* ===================================================================== */
 @media (max-width: 768px) {
@@ -3157,4 +3247,36 @@ textarea:focus-visible {
 
   /* ---- Settings: full-width cards ---- */
   .settings-body { width: 94vw; }
+
+  /* ---- IDE topbar: keep every control tappable & on-screen ---- */
+  .topbar .brand { display: none; }            /* save room; Home + favicon carry the brand */
+  .account-bar { gap: 8px; }
+  .account-bar .usage-meter { display: none; } /* free width so the account button is reachable */
+  .home-btn { padding: 7px 10px; }
+
+  /* Pop-over menus open as a centered on-screen panel (never clipped off the edge).
+     The full-screen .menu-scrim sits behind to catch an outside tap. */
+  .theme-dropdown,
+  .effort-dropdown {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    right: auto;
+    bottom: auto;
+    width: min(86vw, 320px);
+    max-height: 70vh;
+    overflow: auto;
+    z-index: 60;
+  }
+
+  /* ---- Tour fits the smallest iPhones (12 mini → 17 Pro Max) ---- */
+  .tour-card {
+    max-width: none;
+    margin-bottom: 4vh;
+    padding: 22px 18px 18px;
+  }
+  .tour-emoji { font-size: 38px; }
+  .tour-title { font-size: 19px; }
+  .tour-body { font-size: 14px; }
 }

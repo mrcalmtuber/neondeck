@@ -214,6 +214,24 @@ export function Settings() {
           </div>
         </section>
 
+        {/* Help */}
+        <section className="settings-card glass">
+          <h3>Help</h3>
+          <p className="muted small">
+            New here? Replay the quick walkthrough that shows how to build, run, and share a project.
+          </p>
+          <button
+            className="btn-ghost sm"
+            onClick={() => {
+              const s = useStore.getState();
+              s.setTourOpen(true);
+              setView(s.activeProject ? "ide" : "dashboard");
+            }}
+          >
+            ▶ Replay the tour
+          </button>
+        </section>
+
         {/* Connection */}
         <section className="settings-card glass">
           <h3>Connection</h3>

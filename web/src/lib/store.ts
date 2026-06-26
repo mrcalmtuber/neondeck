@@ -172,6 +172,9 @@ interface AppState {
   /** Phone-only: which single pane is visible (the 3 columns collapse to one). */
   mobilePane: MobilePane;
   setMobilePane: (p: MobilePane) => void;
+  /** Onboarding tour overlay — auto-shown the first time you open a project. */
+  tourOpen: boolean;
+  setTourOpen: (v: boolean) => void;
 
   // ---- agent autonomy mode + approval (Feature 3) ----
   agentMode: AgentMode;
@@ -304,6 +307,8 @@ export const useStore = create<AppState>((set, get) => ({
   setFileDrawerOpen: (fileDrawerOpen) => set({ fileDrawerOpen }),
   mobilePane: "agent",
   setMobilePane: (mobilePane) => set({ mobilePane }),
+  tourOpen: false,
+  setTourOpen: (tourOpen) => set({ tourOpen }),
 
   agentMode: "autopilot",
   setAgentMode: (agentMode) => set({ agentMode }),
