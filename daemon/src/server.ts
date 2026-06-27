@@ -1020,6 +1020,8 @@ function runShell(
   return new Promise((resolve) => {
     const procId = `${agentId}:${randomUUID().slice(0, 6)}`;
     let combined = "";
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     send({ type: "terminal_output", id: agentId, stream: "stdout", data: `\r\n$ ${command}\r\n` });
 
     const handle = exec({ mode: session.runtimeMode, workspaceDir, command, image: config.defaultImage });
@@ -1040,11 +1042,34 @@ function runShell(
     send({ type: "processes", id: "broadcast", processes: session.procs.list() });
 
     const finish = (exitCode: number | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
       session.running.delete(procId);
       session.procs.remove(procId);
       send({ type: "processes", id: "broadcast", processes: session.procs.list() });
       resolve({ output: combined, exitCode });
     };
+
+    // The agent loop AWAITS this promise, so a command that never exits — a dev
+    // server (`npm run dev`, `vite`…) or a file watcher — would hang the whole
+    // agent ("stuck on step N"). Guard it: server-style commands get a short
+    // startup window (capture the boot output, then hand control back); everything
+    // else gets a hard ceiling. Both kill the process so it can't squat the box.
+    const isServer =
+      /\b(npm (run )?(dev|start)|yarn (dev|start)|pnpm (dev|start)|vite|next (dev|start)|nuxt dev|react-scripts start|nodemon|flask run|uvicorn|gunicorn|python -m http\.server|http-server|serve|rails server|php -S)\b/i.test(
+        command,
+      ) || /\bnode\b[^|&;]*\bserver\b/i.test(command);
+    const limitMs = isServer ? 10_000 : 300_000;
+    timer = setTimeout(() => {
+      const note = isServer
+        ? `[neon] The server is up and running. It doesn't exit on its own, so it was stopped here — the user previews the app with the Run button, not the agent. Do NOT re-run blocking server commands; continue the task.`
+        : `[neon] Command exceeded ${Math.round(limitMs / 1000)}s with no exit and was stopped. Avoid running long-lived processes from the agent.`;
+      combined += `\n${note}`;
+      send({ type: "terminal_output", id: agentId, stream: "stdout", data: `\r\n${note}\r\n` });
+      handle.kill();
+      finish(isServer ? 0 : null);
+    }, limitMs);
 
     handle.child.stdout.on("data", (d: Buffer) => {
       const s = d.toString();

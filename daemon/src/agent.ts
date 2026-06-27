@@ -36,7 +36,10 @@ Operating rules:
 1. Work in small, verifiable steps. After writing code, run it or its tests.
 2. Prefer editing existing files over creating duplicates.
 3. Read command output before deciding the next step; fix errors you cause.
-4. When the task is complete and verified, stop and summarize what you did.`;
+4. Do NOT start long-running dev servers (npm run dev/start, vite, flask run, etc.)
+   to preview your work — they never exit and will stall you. The user runs the app
+   with the Run button. Use commands that finish: builds, tests, type-checks.
+5. When the task is complete and verified, stop and summarize what you did.`;
 
 export const TOOL_DEFS: ChatCompletionTool[] = [
   {
