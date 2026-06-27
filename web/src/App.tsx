@@ -8,6 +8,7 @@ import { AuthGateway } from "./components/AuthGateway";
 import { Paywall } from "./components/Paywall";
 import { SubscriptionModal } from "./components/SubscriptionModal";
 import { daemon } from "./lib/daemonClient";
+import { getStoredGithubToken } from "./lib/githubAuth";
 import { currentSession, onAuthChange } from "./lib/firebaseClient";
 import { ensureUserDoc } from "./lib/projectsService";
 import { BRAND_MARK } from "./lib/brand";
@@ -68,6 +69,7 @@ export function App() {
   // Keep the daemon client's handshake credentials in sync with the session.
   useEffect(() => {
     daemon.setAuth(session?.token ?? null, session?.userId ?? null);
+    daemon.setGithubToken(getStoredGithubToken()); // browser-held GitHub token for sync
   }, [session]);
 
   // Once authenticated, connect to the local daemon (the only transport — real

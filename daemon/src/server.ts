@@ -33,7 +33,8 @@ import {
   DB_FILENAME,
 } from "./db.js";
 import { openTunnel, type TunnelHandle } from "./tunnel.js";
-import { authenticate, authConfigured, userRoot, type AuthMode } from "./auth.js";
+import { authenticate, authConfigured, userRoot, userStorageKey, type AuthMode } from "./auth.js";
+import { pushProject, pullProject, listRemoteProjects } from "./githubSync.js";
 import { UsageStore, type Meter } from "./usage.js";
 import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
@@ -82,6 +83,12 @@ interface Session {
   userId: string | null;
   authMode: AuthMode;
   projectRoot: string | null;
+  // v7: GitHub OAuth token (browser-held, re-sent each connect) for project sync,
+  // plus a debounced push timer and a quiet window after a restore so the pull's
+  // own file writes don't immediately trigger a redundant push.
+  githubToken: string | null;
+  syncTimer: ReturnType<typeof setTimeout> | null;
+  suppressSyncUntil: number;
   // LOCAL DEV ONLY: this connection earned loopback dev-trust (see
   // loopbackDevAllowed) — a token-less hello may use the local "dev" user.
   allowLoopbackDev: boolean;
@@ -257,8 +264,12 @@ function handleConnection(
     userId: null,
     authMode: "dev",
     projectRoot: null,
+    githubToken: null,
+    syncTimer: null,
+    suppressSyncUntil: 0,
     allowLoopbackDev: loopbackDevAllowed(req, config),
   };
+  activeSessions.add(session);
 
   const send = (msg: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -285,10 +296,12 @@ function handleConnection(
     );
   });
 
-  ws.on("close", () => {
+  ws.on("close", async () => {
     session.agent.stopRequested = true;
     session.agent.abort?.abort();
     session.agent.pendingApproval?.(false);
+    // Best-effort final push of the open project before tearing down.
+    await flushSync(session, config).catch(() => {});
     for (const kill of session.running.values()) kill();
     session.procs.killAll();
     stopContainer(session.containerName);
@@ -302,6 +315,7 @@ function handleConnection(
     } catch {
       /* already closed */
     }
+    activeSessions.delete(session);
     console.log("[daemon] client disconnected, sandbox cleaned up");
   });
 }
@@ -346,6 +360,48 @@ function requireProjectRoot(session: Session): string {
   requireAuth(session);
   if (!session.projectRoot) throw new Error("No project root resolved for this user.");
   return session.projectRoot;
+}
+
+// ---- v7: GitHub project sync (per-user, to their own GitHub) ----
+const SYNC_DEBOUNCE_MS = 5000;
+
+/** Live sessions, so a graceful shutdown can flush every open project to GitHub. */
+const activeSessions = new Set<Session>();
+
+/** Stable cache key for this session's user (mirrors the FS jail). */
+function sessionStorageKey(session: Session): string {
+  return userStorageKey({ userId: session.userId ?? "anon", email: null, mode: session.authMode });
+}
+
+/** Debounced push of the active project to the user's GitHub. No-op without a
+ *  token / open project, or inside the post-restore quiet window. */
+function scheduleSync(session: Session, config: DaemonConfig): void {
+  if (!session.githubToken || !session.activeProject || !session.workspaceDir) return;
+  if (Date.now() < session.suppressSyncUntil) return;
+  if (session.syncTimer) clearTimeout(session.syncTimer);
+  const { githubToken, activeProject, workspaceDir } = session;
+  const key = sessionStorageKey(session);
+  session.syncTimer = setTimeout(() => {
+    session.syncTimer = null;
+    void pushProject(config, githubToken, key, activeProject, workspaceDir);
+  }, SYNC_DEBOUNCE_MS);
+}
+
+/** Immediately push the active project (cancelling any pending debounce). Used on
+ *  project switch, disconnect, and shutdown. Never throws. */
+async function flushSync(session: Session, config: DaemonConfig): Promise<void> {
+  if (session.syncTimer) {
+    clearTimeout(session.syncTimer);
+    session.syncTimer = null;
+  }
+  if (!session.githubToken || !session.activeProject || !session.workspaceDir) return;
+  await pushProject(config, session.githubToken, sessionStorageKey(session), session.activeProject, session.workspaceDir);
+}
+
+/** Flush every connected session — called on SIGTERM so a redeploy doesn't lose
+ *  the latest edits. Best-effort. */
+export async function flushAllSessions(config: DaemonConfig): Promise<void> {
+  await Promise.allSettled([...activeSessions].map((s) => flushSync(s, config)));
 }
 
 /** The caller's effective tier (dev mode forced to the configured dev tier). */
@@ -421,6 +477,8 @@ async function handleMessage(
       session.userId = user.userId;
       session.authMode = user.mode;
       session.projectRoot = userRoot(config, user);
+      // v7: a GitHub token (browser-held) enables per-user project sync this session.
+      session.githubToken = msg.githubToken ?? null;
 
       const tier = currentTier(session, config, store);
       session.runtimeMode = await detectMode(session.forced);
@@ -461,7 +519,17 @@ async function handleMessage(
     // ---- Hub / projects (scoped to the authenticated user's root) ----
     case "list_projects": {
       const root = requireProjectRoot(session);
-      return send({ type: "projects", id: msg.id, projects: listProjects(root) });
+      const projects = listProjects(root);
+      // After a diskless wipe the local dir is empty but the user's GitHub still
+      // has their projects — surface those names too (restored on open). 0 mtime
+      // sorts them after live local ones.
+      if (session.githubToken) {
+        const have = new Set(projects.map((p) => p.name));
+        for (const name of await listRemoteProjects(config, session.githubToken, sessionStorageKey(session))) {
+          if (!have.has(name)) projects.push({ name, lastModifiedMs: 0, entryCount: 0 });
+        }
+      }
+      return send({ type: "projects", id: msg.id, projects });
     }
 
     case "create_project": {
@@ -483,23 +551,34 @@ async function handleMessage(
 
     case "open_project": {
       const root = requireProjectRoot(session);
-      // The project must actually exist on disk. On a diskless host (Render free)
-      // a redeploy wipes /data, so a name from a stale client list may be gone —
-      // return a precise error (prefixed PROJECT_NOT_FOUND so the client can prune
-      // its local index) instead of letting buildTree throw a generic ENOENT.
-      if (!projectExists(root, msg.name)) {
-        return send({
-          type: "error",
-          id: msg.id,
-          message: `PROJECT_NOT_FOUND: "${msg.name}" no longer exists on the server.`,
-        });
-      }
       const dir = resolveProject(root, msg.name);
+      // The project must exist on disk. On a diskless host (Render free) a redeploy
+      // wipes /data, so a name from a stale list may be gone locally — try to
+      // restore it from the user's GitHub first; only if that finds nothing do we
+      // return a precise PROJECT_NOT_FOUND (prefixed so the client prunes its index).
+      let justRestored = false;
+      if (!projectExists(root, msg.name)) {
+        if (session.githubToken) {
+          justRestored = await pullProject(config, session.githubToken, sessionStorageKey(session), msg.name, dir);
+        }
+        if (!justRestored) {
+          return send({
+            type: "error",
+            id: msg.id,
+            message: `PROJECT_NOT_FOUND: "${msg.name}" no longer exists on the server.`,
+          });
+        }
+      }
+      // Persist the project we're leaving before switching away from it.
+      await flushSync(session, config);
       // Switching projects: tear down the previous project's preview so its
       // server doesn't keep holding the port / showing through the proxy.
       stopPreview(session, proxy);
       session.activeProject = msg.name;
       session.workspaceDir = dir;
+      // After a restore, briefly ignore the pull's own file writes so we don't
+      // immediately re-push an identical tree.
+      session.suppressSyncUntil = justRestored ? Date.now() + 8000 : 0;
       // Switching projects: drop the old project's DB handle so db_open reopens
       // storage.db inside the new workspace.
       try {
@@ -510,9 +589,10 @@ async function handleMessage(
       session.db = null;
       // (Re)start the per-session watcher for the active project.
       session.watcher?.close();
-      session.watcher = watchWorkspace(dir, (root) =>
-        send({ type: "workspace_changed", id: "broadcast", root }),
-      );
+      session.watcher = watchWorkspace(dir, (root) => {
+        send({ type: "workspace_changed", id: "broadcast", root });
+        scheduleSync(session, config); // debounced push of this project to GitHub
+      });
       return send({
         type: "project_opened",
         id: msg.id,

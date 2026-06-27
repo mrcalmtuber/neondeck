@@ -74,6 +74,13 @@ export interface DaemonConfig {
   /** Where Stripe Checkout returns the user (defaults to the app origin). */
   appOrigin: string;
 
+  // ---- v7: GitHub OAuth (per-user project sync to their own GitHub) ----
+  /** OAuth App client id (public — sent to the browser to build the authorize
+   *  URL) and secret (daemon-only — used in the code→token exchange). Empty until
+   *  set; when unset the whole GitHub-sync feature is off. */
+  githubClientId: string;
+  githubClientSecret: string;
+
   /** Directory holding cross-user metering/account ledgers (hidden from Hub). */
   metaDir: string;
 }
@@ -176,6 +183,10 @@ export function loadConfig(argv: string[]): DaemonConfig {
     stripePricePro: process.env.STRIPE_PRICE_PRO ?? "",
     stripePriceMax: process.env.STRIPE_PRICE_MAX ?? "",
     appOrigin,
+
+    // GitHub OAuth (per-user project sync). Off unless both are set.
+    githubClientId: process.env.GITHUB_OAUTH_CLIENT_ID ?? "",
+    githubClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET ?? "",
 
     metaDir: path.join(projectsRoot, ".ide-meta"),
   };

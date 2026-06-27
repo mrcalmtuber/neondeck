@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
-import { startServer } from "./server.js";
+import { startServer, flushAllSessions } from "./server.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -53,9 +53,15 @@ async function main(): Promise<void> {
 
   const wss = await startServer(config);
 
-  const shutdown = () => {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log("\n[daemon] shutting down…");
+    // Push every open project to GitHub before the (diskless) box goes away.
+    await flushAllSessions(config).catch(() => {});
     wss.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref(); // never hang on lingering sockets
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

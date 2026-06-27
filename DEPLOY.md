@@ -34,9 +34,33 @@ bottom for Fly / Railway / a VM.
 - **Sleeps after ~15 min idle** → the next visit cold-starts (~30–60s) and any running
   preview dev server is killed. Fine for occasional family use; annoying for always-on.
 - **No persistent disk on free** → user projects (`IDE_PROJECTS_ROOT=/data/projects`) are
-  **wiped on every restart/sleep/deploy**. To keep projects, upgrade to a paid instance and
-  uncomment the `disk:` block in `render.yaml` (mount `/data`). Render injects `PORT`
+  **wiped on every restart/sleep/deploy**. Two ways to keep them: let users **Connect GitHub**
+  (next section — free, projects sync to each user's own repo), **or** upgrade to a paid instance
+  and uncomment the `disk:` block in `render.yaml` (mount `/data`). Render injects `PORT`
   automatically; the daemon reads it.
+
+## Connect GitHub (free per-user project persistence)
+
+When the `GITHUB_OAUTH_*` vars are set, users get an optional **"Connect GitHub"** prompt (before
+the first-run tour, and in Settings). Once connected, each user's projects are synced to **their
+own** private `neondeck-projects` repo — committed on change, restored on open — so they survive
+the diskless wipe. The OAuth token lives in the user's **browser** (re-sent each connect), so it
+also survives redeploys; the daemon never persists it. Off entirely when the vars are unset.
+
+1. **Create a GitHub OAuth App:** GitHub → **Settings → Developer settings → OAuth Apps → New OAuth
+   App**:
+   - Application name: `NeonDeck`
+   - Homepage URL: `https://<your-app>.onrender.com`
+   - Authorization callback URL: `https://<your-app>.onrender.com/api/github/callback`
+     *(also add `http://localhost:5050/api/github/callback` for local dev)*
+   - Register → copy the **Client ID**, then **Generate a client secret** and copy it.
+2. **Set the env vars in Render** (the service → Environment, both `sync:false`):
+   - `GITHUB_OAUTH_CLIENT_ID` = the Client ID
+   - `GITHUB_OAUTH_CLIENT_SECRET` = the client secret (daemon-only — never shipped to the browser)
+3. **Redeploy.** Users can now connect; their projects sync to `github.com/<user>/neondeck-projects`.
+
+Scope requested is `repo` (projects can be private). Disconnect (in Settings) clears the stored
+token. If a GitHub call fails, the IDE keeps working — sync is best-effort.
 
 ## Auto-deploy (push → live)
 

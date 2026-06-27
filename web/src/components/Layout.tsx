@@ -6,9 +6,11 @@ import { ApprenticeAlert } from "./ApprenticeAlert";
 import { Workspace } from "./Workspace";
 import { TemplateHub } from "./TemplateHub";
 import { ProjectTour, TOUR_SEEN_KEY } from "./ProjectTour";
-import { useEffect } from "react";
+import { GitHubConnectPrompt, GH_PROMPT_SEEN_KEY } from "./GitHubConnectPrompt";
+import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
 import { ws } from "../lib/workspaceService";
+import { githubAvailable, getStoredGithubToken } from "../lib/githubAuth";
 import { BRAND_LABEL } from "../lib/brand";
 
 /**
@@ -25,19 +27,34 @@ export function Layout() {
   const transport = useStore((s) => s.transport);
   const activeProject = useStore((s) => s.activeProject);
   const setView = useStore((s) => s.setView);
+  const [ghPromptOpen, setGhPromptOpen] = useState(false);
 
   // Real-time file tree: redraw on any workspace change.
   useEffect(() => ws.onTreeChange(setTree), [setTree, transport]);
 
-  // First time inside a project, kick off the friendly walkthrough.
+  // First time inside a project: optionally offer to connect GitHub (convenience),
+  // THEN run the friendly walkthrough. If GitHub isn't available / already linked /
+  // already offered, go straight to the tour.
   useEffect(() => {
-    let seen = false;
-    try {
-      seen = localStorage.getItem(TOUR_SEEN_KEY) === "done";
-    } catch {
-      /* private mode — just show it */
-    }
-    if (!seen) useStore.getState().setTourOpen(true);
+    const flag = (k: string) => {
+      try {
+        return localStorage.getItem(k) === "done";
+      } catch {
+        return false;
+      }
+    };
+    if (flag(TOUR_SEEN_KEY)) return; // returning user — nothing to show
+    let cancelled = false;
+    (async () => {
+      const offerGitHub =
+        !flag(GH_PROMPT_SEEN_KEY) && !getStoredGithubToken() && (await githubAvailable());
+      if (cancelled) return;
+      if (offerGitHub) setGhPromptOpen(true);
+      else useStore.getState().setTourOpen(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -65,6 +82,16 @@ export function Layout() {
       <TemplateHub />
 
       <Workspace />
+
+      {/* Optional first-run GitHub connect (convenience), shown before the tour. */}
+      {ghPromptOpen && (
+        <GitHubConnectPrompt
+          onDone={() => {
+            setGhPromptOpen(false);
+            useStore.getState().setTourOpen(true);
+          }}
+        />
+      )}
 
       {/* First-run interactive walkthrough (replayable from Settings). */}
       <ProjectTour />

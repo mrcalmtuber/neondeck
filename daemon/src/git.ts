@@ -11,7 +11,7 @@ import type { GitCommit } from "@ide/shared";
 // Field delimiter — matches git's %x1f (ASCII unit separator) format token.
 const UNIT_SEP = String.fromCharCode(0x1f);
 
-function run(
+export function run(
   cwd: string,
   args: string[],
   onOutput?: (s: string) => void,

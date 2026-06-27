@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   formatTokens,
   getTier,
@@ -12,6 +12,7 @@ import {
 } from "@ide/shared";
 import { useStore, THEMES, type Theme } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
+import { connectGitHub, getStoredGithubToken, clearGithubToken, githubAvailable } from "../lib/githubAuth";
 import { signOut } from "../lib/firebaseClient";
 import { PlanCards } from "./PlanCards";
 import { BRAND_LABEL } from "../lib/brand";
@@ -45,6 +46,34 @@ export function Settings() {
 
   const [busyTier, setBusyTier] = useState<Tier | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // GitHub connection (project sync). Only surfaced when the daemon has OAuth set.
+  const [ghAvailable, setGhAvailable] = useState(false);
+  const [ghConnected, setGhConnected] = useState<boolean>(() => !!getStoredGithubToken());
+  const [ghBusy, setGhBusy] = useState(false);
+  useEffect(() => {
+    githubAvailable().then(setGhAvailable);
+  }, []);
+  function reconnectForGithub() {
+    daemon.disconnect();
+    useStore.getState().requestConnect();
+  }
+  async function connectGh() {
+    setGhBusy(true);
+    const token = await connectGitHub();
+    setGhBusy(false);
+    if (token) {
+      daemon.setGithubToken(token);
+      setGhConnected(true);
+      reconnectForGithub();
+    }
+  }
+  function disconnectGh() {
+    clearGithubToken();
+    daemon.setGithubToken(null);
+    setGhConnected(false);
+    reconnectForGithub();
+  }
 
   const cfg = getTier(tier);
   const daemonReady = transport === "daemon" && daemon.connected;
@@ -207,6 +236,29 @@ export function Settings() {
             )}
           </div>
         </section>
+
+        {/* GitHub connection (project sync) — only when the daemon has OAuth set */}
+        {ghAvailable && (
+          <section className="settings-card glass">
+            <h3>GitHub</h3>
+            <div className="settings-pref">
+              <span className="muted small">
+                {ghConnected
+                  ? "Connected — your projects stay handy across devices."
+                  : "Connect GitHub to keep your projects handy across devices."}
+              </span>
+              {ghConnected ? (
+                <button className="btn-ghost sm" onClick={disconnectGh} disabled={ghBusy}>
+                  Disconnect
+                </button>
+              ) : (
+                <button className="btn-neon sm" onClick={connectGh} disabled={ghBusy}>
+                  {ghBusy ? "Connecting…" : "🐙 Connect GitHub"}
+                </button>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* Help */}
         <section className="settings-card glass">

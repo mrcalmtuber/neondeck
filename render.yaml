@@ -4,8 +4,9 @@
 # ⚠ FREE-TIER LIMITS (Render): the free web service SLEEPS after ~15 min idle
 # (cold start on the next request), and the free tier has NO persistent disk —
 # so user projects under IDE_PROJECTS_ROOT are WIPED on every restart/sleep/deploy.
-# For an always-on box with persistent projects, upgrade the plan and uncomment the
-# `disk:` block below (a disk requires a paid instance).
+# To keep projects WITHOUT a disk: set the GITHUB_OAUTH_* vars below so users can
+# connect their GitHub and have their projects synced to their own repos (see
+# DEPLOY.md → "Connect GitHub"). Or upgrade the plan and uncomment `disk:` below.
 services:
   - type: web
     name: neondeck
@@ -36,6 +37,12 @@ services:
       - key: STRIPE_PRICE_PRO
         sync: false
       - key: STRIPE_PRICE_MAX
+        sync: false
+      # ---- GitHub OAuth (per-user project sync). Leave UNSET to disable; set both
+      # to let users "Connect GitHub" and sync projects to their own repos. ----
+      - key: GITHUB_OAUTH_CLIENT_ID
+        sync: false
+      - key: GITHUB_OAUTH_CLIENT_SECRET
         sync: false
       # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed: the daemon auto-trusts
       # same-origin requests (web + API + WS share one origin), and Stripe's checkout

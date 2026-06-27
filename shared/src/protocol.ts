@@ -39,7 +39,9 @@ export const DAEMON_URL = `ws://${DAEMON_HOST}:${DAEMON_PORT}`;
 /** Preferred host gateway port; the daemon scans upward if it is taken. */
 export const PROXY_PORT = 9000;
 
-/** Bump when the message shape changes; the daemon refuses mismatched clients. */
+/** Bump when the message shape changes; the daemon refuses mismatched clients.
+ *  (hello.githubToken is an optional, additive field — old daemons ignore it, so
+ *  no bump is needed and a running daemon never gets force-rejected.) */
 export const PROTOCOL_VERSION = 6;
 
 export type RuntimeMode = "DOCKER" | "LOCAL_NODE" | "BROWSER";
@@ -118,6 +120,10 @@ export interface HelloRequest {
   token?: string;
   /** The authenticated user id, echoed for multi-tenant file isolation. */
   userId?: string;
+  /** Optional GitHub OAuth access token (held in the browser; re-sent each
+   *  connect). When present the daemon syncs this user's projects to their own
+   *  GitHub so they survive a diskless redeploy. */
+  githubToken?: string;
 }
 
 /** Per-user subscription + metering snapshot pushed to the browser. */

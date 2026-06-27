@@ -137,8 +137,13 @@ export async function authenticate(
 }
 
 /** Filesystem-safe slug for a user id (Firebase uids are alnum; be defensive). */
-function safeUserId(userId: string): string {
+export function safeUserId(userId: string): string {
   return userId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80) || "anon";
+}
+
+/** Stable per-user key for sync cache paths. Dev → "local-dev", else slugged uid. */
+export function userStorageKey(user: AuthedUser): string {
+  return user.mode === "dev" ? DEV_USER_ID : safeUserId(user.userId);
 }
 
 /**

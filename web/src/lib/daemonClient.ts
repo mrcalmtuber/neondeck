@@ -78,6 +78,8 @@ export class DaemonClient {
   private listeners = new Set<Listener>();
   private token: string | null = null;
   private uid: string | null = null;
+  /** GitHub OAuth token (browser-held) sent on the handshake for project sync. */
+  private githubToken: string | null = null;
   /** Project open on the CURRENT socket. The daemon tracks the active workspace
    *  per-connection, so this resets on disconnect and must be re-opened after a
    *  reconnect (otherwise file/agent ops hit "Open a project from the Hub first"). */
@@ -99,6 +101,11 @@ export class DaemonClient {
   setAuth(token: string | null, userId: string | null): void {
     this.token = token;
     this.uid = userId;
+  }
+
+  /** Set the GitHub OAuth token sent on the next handshake (project sync). */
+  setGithubToken(token: string | null): void {
+    this.githubToken = token;
   }
 
   get connected(): boolean {
@@ -185,6 +192,7 @@ export class DaemonClient {
             protocolVersion: PROTOCOL_VERSION,
             token: this.token ?? undefined,
             userId: this.uid ?? undefined,
+            githubToken: this.githubToken ?? undefined,
           });
           if (hello.type === "hello_ok") {
             this.info = {

@@ -53,7 +53,45 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
           ok: true,
           authMode: authConfigured(config) ? "firebase" : "dev",
           billingEnabled: billingEnabled(config),
+          // Public client id so the browser can build the GitHub authorize URL.
+          // null when GitHub OAuth isn't configured → the UI hides "Connect GitHub".
+          githubClientId: config.githubClientId || null,
         });
+      }
+
+      // ---- GitHub OAuth callback: exchange the code for a token, hand it to the
+      // opener via postMessage (the browser stores it; the daemon never persists
+      // it). The secret stays here. ----
+      if (path === "/api/github/callback" && req.method === "GET") {
+        const code = url.searchParams.get("code") ?? "";
+        const state = url.searchParams.get("state") ?? "";
+        let token = "";
+        if (code && config.githubClientId && config.githubClientSecret) {
+          try {
+            const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+              method: "POST",
+              headers: { "content-type": "application/json", accept: "application/json" },
+              body: JSON.stringify({
+                client_id: config.githubClientId,
+                client_secret: config.githubClientSecret,
+                code,
+              }),
+            });
+            token = ((await tokenRes.json()) as { access_token?: string }).access_token ?? "";
+          } catch {
+            /* token stays empty → the page reports failure */
+          }
+        }
+        const msg = JSON.stringify({ type: "github-oauth", token, state });
+        const target = JSON.stringify(config.appOrigin);
+        const html = `<!doctype html><meta charset="utf-8"><title>Connecting GitHub…</title>
+<body style="font-family:system-ui;background:#0b0f19;color:#e8f0ff;display:grid;place-items:center;height:100vh">
+<p>${token ? "GitHub connected — you can close this window." : "GitHub connection failed."}</p>
+<script>(function(){try{window.opener&&window.opener.postMessage(${msg}, ${target});}catch(e){}setTimeout(function(){window.close();},300);})();</script>
+</body>`;
+        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        res.end(html);
+        return;
       }
 
       // ---- Stripe webhook (raw body, no CORS, no auth — Stripe signs it) ----
