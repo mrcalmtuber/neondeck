@@ -120,8 +120,10 @@ included). What costs money is *owning a domain name*:
   record Render shows at your registrar. Cert provisions automatically in a few minutes.
 
 After adding a custom domain, also: (a) add that host to **Firebase → Authentication →
-Authorized domains** (so Google sign-in works), and (b) if it differs from the onrender host,
-set `IDE_APP_ORIGIN=https://yourdomain` so Stripe returns to the right place.
+Authorized domains** (so Google sign-in works); (b) if it differs from the onrender host, set
+`IDE_APP_ORIGIN=https://yourdomain` so Stripe **and the GitHub-OAuth popup** return to the right
+place; and (c) if GitHub sync is on, add `https://yourdomain/api/github/callback` to your GitHub
+OAuth App's callback URLs (keep the onrender one too).
 
 ### Cloudflare-registered domain, hosted on Render (step by step)
 
@@ -146,9 +148,15 @@ registrar + a DNS pointer, not a second host and not a proxy in front of your ap
 5. **Whitelist the host for sign-in** (required): Firebase → project **`neondeck-8cbe0`** →
    Authentication → **Settings → Authorized domains → Add domain** → your custom host. Without
    this, Google sign-in fails on the new URL.
-6. **(Optional) Point Stripe at the new host:** in Render → Environment set
-   `IDE_APP_ORIGIN=https://app.yourdomain.com` and redeploy, so checkout returns the user to the
-   custom domain instead of `…onrender.com`. The webhook can stay on the onrender.com URL.
+6. **Point Stripe + the GitHub-OAuth popup at the new host:** in Render → Environment set
+   `IDE_APP_ORIGIN=https://app.yourdomain.com` and redeploy. This makes Stripe checkout return to
+   the custom domain, and — **required if GitHub sync is enabled** — makes the OAuth callback's
+   `postMessage` target the custom origin (otherwise the popup's token is dropped and "Connect
+   GitHub" silently fails). The Stripe webhook can stay on the onrender.com URL.
+7. **(GitHub sync only) Register the new callback URL:** in your GitHub OAuth App add
+   `https://app.yourdomain.com/api/github/callback` to the Authorization callback URLs (keep the
+   onrender one so both hosts keep working). The browser builds `redirect_uri` from whatever host
+   you're on, so the custom-domain callback must be registered or GitHub rejects the redirect.
 
 **No `IDE_ALLOWED_ORIGINS` needed.** Web + API + WebSocket all come from the one custom-domain
 origin, and the daemon auto-trusts same-origin requests (`isSameOrigin` in `daemon/src/server.ts`
