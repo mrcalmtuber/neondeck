@@ -3525,3 +3525,10 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
 .maint-card h1 { color: #ff5a7a; margin: 8px 0 10px; }
 .maint-card p { color: #e8d6da; line-height: 1.5; }
 .maint-icon { font-size: 44px; }
+
+/* ===== Auth: forgot-password link ===== */
+.auth-forgot {
+  align-self: flex-end;
+  margin-top: -4px;
+  font-size: 12px;
+}

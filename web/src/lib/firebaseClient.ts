@@ -3,6 +3,7 @@ import {
   getAuth,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
@@ -71,6 +72,11 @@ export async function signUp(email: string, password: string): Promise<void> {
 
 export async function signIn(email: string, password: string): Promise<void> {
   await signInWithEmailAndPassword(auth, email, password);
+}
+
+/** Email a password-reset link (Firebase hosts the reset page). */
+export async function resetPassword(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email);
 }
 
 /** Shared Google provider — always prompt account selection so users can switch. */

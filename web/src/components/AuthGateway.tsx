@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { signIn, signUp, signInWithGoogle, getRedirectError } from "../lib/firebaseClient";
+import { signIn, signUp, signInWithGoogle, getRedirectError, resetPassword } from "../lib/firebaseClient";
 import { isSafari } from "../lib/browser";
 import { BRAND_LABEL } from "../lib/brand";
 import { TIER_LIST } from "@ide/shared";
@@ -55,6 +55,25 @@ export function AuthGateway() {
   async function createAccount() {
     await signUp(email, password);
     // Firebase signs the new user in immediately — App transitions on its own.
+  }
+
+  // Email a password-reset link to whatever's typed in the Email field.
+  async function forgotPassword() {
+    setError(null);
+    setNotice(null);
+    if (!email.trim()) {
+      setError("Enter your email above, then tap “Forgot password”.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await resetPassword(email.trim());
+      setNotice(`Reset link sent to ${email.trim()}. Check your inbox (and spam).`);
+    } catch (err) {
+      setError(friendlyAuthError(err));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function google() {
@@ -118,6 +137,17 @@ export function AuthGateway() {
               autoComplete={mode === "login" ? "current-password" : "new-password"}
             />
           </label>
+
+          {mode === "login" && (
+            <button
+              type="button"
+              className="linklike auth-forgot"
+              onClick={forgotPassword}
+              disabled={busy}
+            >
+              Forgot password?
+            </button>
+          )}
 
           {error && <div className="auth-error">⚠️ {error}</div>}
           {notice && <div className="auth-notice">✓ {notice}</div>}
