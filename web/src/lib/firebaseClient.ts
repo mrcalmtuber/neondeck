@@ -4,6 +4,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
+  fetchSignInMethodsForEmail,
   signInWithRedirect,
   getRedirectResult,
   GoogleAuthProvider,
@@ -77,6 +78,19 @@ export async function signIn(email: string, password: string): Promise<void> {
 /** Email a password-reset link (Firebase hosts the reset page). */
 export async function resetPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email);
+}
+
+/**
+ * Which sign-in methods exist for an email (e.g. ["password"], ["google.com"]).
+ * Best-effort: returns [] if Firebase's email-enumeration protection is on (it
+ * suppresses this for privacy). Used to warn that a Google-only account can't get
+ * a password-reset email. */
+export async function getSignInMethods(email: string): Promise<string[]> {
+  try {
+    return await fetchSignInMethodsForEmail(auth, email);
+  } catch {
+    return [];
+  }
 }
 
 /** Shared Google provider — always prompt account selection so users can switch. */

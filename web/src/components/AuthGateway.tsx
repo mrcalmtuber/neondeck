@@ -1,5 +1,12 @@
 import { useState, useEffect } from "react";
-import { signIn, signUp, signInWithGoogle, getRedirectError, resetPassword } from "../lib/firebaseClient";
+import {
+  signIn,
+  signUp,
+  signInWithGoogle,
+  getRedirectError,
+  resetPassword,
+  getSignInMethods,
+} from "../lib/firebaseClient";
 import { isSafari } from "../lib/browser";
 import { BRAND_LABEL } from "../lib/brand";
 import { TIER_LIST } from "@ide/shared";
@@ -23,6 +30,13 @@ export function AuthGateway() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Forgot-password popup (its own email input, independent of the form).
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState<string | null>(null);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
 
   // Surface any error from a returning Google redirect sign-in (otherwise a
   // blocked/failed redirect would silently drop the user back here).
@@ -57,22 +71,46 @@ export function AuthGateway() {
     // Firebase signs the new user in immediately — App transitions on its own.
   }
 
-  // Email a password-reset link to whatever's typed in the Email field.
-  async function forgotPassword() {
-    setError(null);
-    setNotice(null);
-    if (!email.trim()) {
-      setError("Enter your email above, then tap “Forgot password”.");
+  // Open the forgot-password popup, prefilling whatever's already typed.
+  function openForgot() {
+    setResetEmail(email);
+    setResetErr(null);
+    setResetMsg(null);
+    setForgotOpen(true);
+  }
+
+  // Send the reset link to the email typed in the popup.
+  async function sendReset(e: React.FormEvent) {
+    e.preventDefault();
+    setResetErr(null);
+    setResetMsg(null);
+    const addr = resetEmail.trim();
+    if (!addr) {
+      setResetErr("Enter your email.");
       return;
     }
-    setBusy(true);
+    setResetBusy(true);
     try {
-      await resetPassword(email.trim());
-      setNotice(`Reset link sent to ${email.trim()}. Check your inbox (and spam).`);
+      // If we can tell this email has no password (e.g. a Google account), say so
+      // instead of pretending a link was sent (Firebase can't reset a passwordless
+      // account). Best-effort — returns [] when enumeration protection is on.
+      const methods = await getSignInMethods(addr);
+      if (methods.length > 0 && !methods.includes("password")) {
+        setResetErr(
+          methods.includes("google.com")
+            ? "That email signs in with Google — there's no password to reset. Use “Continue with Google”."
+            : "That email uses a different sign-in method — there's no password to reset.",
+        );
+        return;
+      }
+      await resetPassword(addr);
+      setResetMsg(
+        `If an account with a password exists for ${addr}, a reset link is on its way — check your inbox and spam. (Accounts that use “Continue with Google” won't get one.)`,
+      );
     } catch (err) {
-      setError(friendlyAuthError(err));
+      setResetErr(friendlyAuthError(err));
     } finally {
-      setBusy(false);
+      setResetBusy(false);
     }
   }
 
@@ -142,7 +180,7 @@ export function AuthGateway() {
             <button
               type="button"
               className="linklike auth-forgot"
-              onClick={forgotPassword}
+              onClick={openForgot}
               disabled={busy}
             >
               Forgot password?
@@ -205,6 +243,44 @@ export function AuthGateway() {
           ))}
         </div>
       </div>
+
+      {forgotOpen && (
+        <div className="modal-backdrop" onClick={() => setForgotOpen(false)}>
+          <div className="modal dialog glass" onClick={(e) => e.stopPropagation()}>
+            <h3>Reset your password</h3>
+            <p className="subtitle">Enter your account email and we’ll send a reset link.</p>
+            <form onSubmit={sendReset} className="auth-form">
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  autoFocus
+                  autoComplete="email"
+                />
+              </label>
+              {resetErr && <div className="auth-error">⚠️ {resetErr}</div>}
+              {resetMsg && <div className="auth-notice">✓ {resetMsg}</div>}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setForgotOpen(false)}
+                  disabled={resetBusy}
+                >
+                  Close
+                </button>
+                <button type="submit" className="btn-primary" disabled={resetBusy}>
+                  {resetBusy ? "Sending…" : "Send reset link"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
