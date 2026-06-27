@@ -158,22 +158,24 @@ export function effortForTier(id: Tier): AgentEffort {
   return getTier(id).effort;
 }
 
-/** May this tier select the given effort? Every effort is available on every plan. */
-export function effortAllowedForTier(_tier: Tier, _effort: AgentEffort): boolean {
-  return true;
+/** May this tier select the given effort? High reasoning is a Max-tier perk; Low
+ *  and Medium are available on every plan. */
+export function effortAllowedForTier(tier: Tier, effort: AgentEffort): boolean {
+  return effort === "high" ? tier === 2 : true;
 }
 
-/** Clamp a requested effort to what the tier may use (no clamping — all allowed). */
+/** Clamp a requested effort to what the tier may use (High→Medium for Free/Pro). */
 export function clampEffortForTier(tier: Tier, effort: AgentEffort): AgentEffort {
   return effortAllowedForTier(tier, effort) ? effort : "medium";
 }
 
 /**
- * Token-burn multiplier. Always 1× — effort no longer carries a token penalty on
- * any plan (tiers differ only by price, monthly allowance, and publish/share).
+ * Token-burn multiplier: Free on Medium effort burns 2× as fast (both the monthly
+ * pool and the hidden daily cap) — a soft nudge toward upgrading. Everything else
+ * is normal (1×); Pro/Max are never penalized.
  */
-export function tokenMultiplierForEffort(_tier: Tier, _effort: AgentEffort): number {
-  return 1;
+export function tokenMultiplierForEffort(tier: Tier, effort: AgentEffort): number {
+  return tier === 0 && effort === "medium" ? 2 : 1;
 }
 
 /** May this tier publish/share apps publicly (share links, deploy)? Paid only. */

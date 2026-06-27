@@ -107,7 +107,10 @@ export interface AgentDeps {
   meter: Meter;
 }
 
-const MAX_STEPS = 25;
+// Upper bound on agent turns. The token meter (monthly pool + hidden daily cap)
+// is the REAL stop condition; this is just a runaway guard set high enough that a
+// legitimate multi-file build is never cut off midway.
+const MAX_STEPS = 150;
 
 export async function runAgent(promptId: string, prompt: string, deps: AgentDeps): Promise<void> {
   const { config, state, send } = deps;

@@ -8,6 +8,8 @@ import {
   EFFORT_LABELS,
   effortForTier,
   clampEffortForTier,
+  effortAllowedForTier,
+  tokenMultiplierForEffort,
   type AgentEffort,
   type Tier,
 } from "@ide/shared";
@@ -44,6 +46,7 @@ export function AgentPanel() {
   const tier = (useStore((s) => s.usage?.tier) ?? 0) as Tier;
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
+  const setSubscriptionModalOpen = useStore((s) => s.setSubscriptionModalOpen);
   const [input, setInput] = useState("");
   const [effortOpen, setEffortOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -56,10 +59,15 @@ export function AgentPanel() {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
   }, [messages]);
 
-  /** Pick an effort — every level is available on every plan. */
+  /** Pick an effort. High reasoning is a Max-plan perk — for lower tiers that row
+   *  opens the upgrade modal instead of selecting it. */
   function pickEffort(level: AgentEffort) {
-    setAgentEffort(level);
     setEffortOpen(false);
+    if (!effortAllowedForTier(tier, level)) {
+      setSubscriptionModalOpen(true);
+      return;
+    }
+    setAgentEffort(level);
   }
 
   function submit() {
@@ -181,6 +189,12 @@ export function AgentPanel() {
         </div>
       )}
 
+      {tokenMultiplierForEffort(tier, effectiveEffort) > 1 && (
+        <div className="effort-2x-warn">
+          ⚠ Medium effort doubles token usage — your limit burns 2× as fast.
+        </div>
+      )}
+
       <div className="agent-input">
         <textarea
           value={input}
@@ -219,16 +233,24 @@ export function AgentPanel() {
               <>
                 <div className="menu-scrim" onClick={() => setEffortOpen(false)} />
                 <div className="effort-dropdown">
-                  {EFFORT_LEVELS.map((level) => (
-                    <button
-                      key={level}
-                      className={`effort-row ${effectiveEffort === level ? "active" : ""}`}
-                      onClick={() => pickEffort(level)}
-                    >
-                      <span>{EFFORT_LABELS[level]}</span>
-                      {effectiveEffort === level && <span className="effort-check">✓</span>}
-                    </button>
-                  ))}
+                  {EFFORT_LEVELS.map((level) => {
+                    const locked = !effortAllowedForTier(tier, level);
+                    return (
+                      <button
+                        key={level}
+                        className={`effort-row ${effectiveEffort === level ? "active" : ""}${locked ? " locked" : ""}`}
+                        onClick={() => pickEffort(level)}
+                        title={locked ? "High reasoning is a Max-plan feature — upgrade to use it" : undefined}
+                      >
+                        <span>{EFFORT_LABELS[level]}</span>
+                        {locked ? (
+                          <span className="effort-lock">🔒 Max</span>
+                        ) : (
+                          effectiveEffort === level && <span className="effort-check">✓</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}

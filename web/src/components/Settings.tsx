@@ -6,6 +6,8 @@ import {
   EFFORT_LABELS,
   effortForTier,
   clampEffortForTier,
+  effortAllowedForTier,
+  tokenMultiplierForEffort,
   type Tier,
 } from "@ide/shared";
 import { useStore, THEMES, type Theme } from "../lib/store";
@@ -201,16 +203,27 @@ export function Settings() {
           <div className="settings-pref">
             <span className="muted small">Reasoning effort</span>
             <div className="settings-seg">
-              {EFFORT_LEVELS.map((level) => (
-                <button
-                  key={level}
-                  className={effectiveEffort === level ? "on" : ""}
-                  onClick={() => setAgentEffort(level)}
-                >
-                  {EFFORT_LABELS[level]}
-                </button>
-              ))}
+              {EFFORT_LEVELS.map((level) => {
+                const locked = !effortAllowedForTier(tier, level);
+                return (
+                  <button
+                    key={level}
+                    className={`${effectiveEffort === level ? "on" : ""}${locked ? " locked" : ""}`}
+                    disabled={locked}
+                    title={locked ? "High reasoning is a Max-plan feature" : undefined}
+                    onClick={() => setAgentEffort(level)}
+                  >
+                    {EFFORT_LABELS[level]}
+                    {locked ? " 🔒" : ""}
+                  </button>
+                );
+              })}
             </div>
+            {tokenMultiplierForEffort(tier, effectiveEffort) > 1 && (
+              <span className="muted small effort-2x-warn">
+                ⚠ Medium effort burns your tokens 2× as fast on Free.
+              </span>
+            )}
           </div>
         </section>
 
