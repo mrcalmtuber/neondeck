@@ -77,10 +77,18 @@ export function exec(opts: ExecOpts): ExecHandle {
   // No `shell: true` — the argv form keeps the AI/user command contained to
   // the `sh -c` argument rather than the daemon's own shell. The env is scrubbed
   // of the daemon's secrets so a user's app/shell can't read them.
+  const env = sanitizedChildEnv();
+  // Tell the app which port to bind. The daemon allocates a unique port per
+  // preview; dev servers that honor PORT (and our blueprints using ${PORT}) pick
+  // it up, so previews don't collide on a single hardcoded port.
+  if (opts.appPort != null) {
+    env.PORT = String(opts.appPort);
+    env.HOST = "0.0.0.0";
+  }
   const child = spawn("sh", ["-c", opts.command], {
     cwd: opts.workspaceDir,
     stdio: ["pipe", "pipe", "pipe"],
-    env: sanitizedChildEnv(),
+    env,
   }) as ChildProcessWithoutNullStreams;
 
   return { child, kill: () => child.kill("SIGKILL") };

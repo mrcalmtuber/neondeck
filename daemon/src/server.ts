@@ -21,6 +21,7 @@ import { gitLog, gitPublish } from "./git.js";
 import { explain, fix } from "./ai.js";
 import { ProcRegistry, sampleRam } from "./procs.js";
 import { resolveStartCommand, waitForPort, DEFAULT_RUN_COMMAND } from "./staticServer.js";
+import { allocatePreviewPort, releasePreviewPort } from "./ports.js";
 import {
   openDb,
   listTables,
@@ -292,6 +293,7 @@ function handleConnection(
     session.procs.killAll();
     stopContainer(session.containerName);
     if (session.previewSlot) proxy.unregister(session.previewSlot);
+    releasePreviewPort(session.previewPort); // return this session's preview port to the pool
     session.watcher?.close();
     if (session.ramTimer) clearInterval(session.ramTimer);
     session.tunnel?.close();
@@ -328,6 +330,7 @@ function stopPreview(session: Session, proxy: ProxyRouter): boolean {
     proxy.unregister(session.previewSlot);
     session.previewSlot = null;
   }
+  releasePreviewPort(session.previewPort);
   session.previewPort = null;
   return stopped;
 }
@@ -572,11 +575,15 @@ async function handleMessage(
       // leave the proxy routing to the old app. Give a stopped listener a moment
       // to release the port before the new server binds.
       if (stopPreview(session, proxy)) await new Promise((r) => setTimeout(r, 350));
+      // Allocate a UNIQUE port for this preview (ignore the client's hardcoded
+      // hint) so concurrent previews never collide and a stale/orphaned server on
+      // some other port can't shadow this one.
+      const appPort = await allocatePreviewPort();
       const slot = `app-${++slotCounter}`;
       session.previewSlot = slot;
-      session.previewPort = msg.appPort;
+      session.previewPort = appPort;
       session.previewProcId = msg.id;
-      proxy.register(slot, msg.appPort);
+      proxy.register(slot, appPort);
       // Relative preview path (trailing slash required — see proxy.ts). The client
       // turns this into an absolute URL against its own daemon base, so it works
       // same-origin behind a PaaS/tunnel AND in local dev with no localhost
@@ -590,7 +597,7 @@ async function handleMessage(
       const requested = (msg.startCommand ?? "").trim();
       const resolved =
         !requested || requested === DEFAULT_RUN_COMMAND
-          ? resolveStartCommand(wsDir, msg.appPort)
+          ? resolveStartCommand(wsDir, appPort)
           : { command: requested, kind: "node" as const };
       send({
         type: "terminal_output",
@@ -603,7 +610,7 @@ async function handleMessage(
         resolved.command,
         {
           label: "Dev server",
-          port: msg.appPort,
+          port: appPort,
           name: session.containerName,
           image: msg.image,
           workspaceDir: wsDir,
@@ -623,7 +630,7 @@ async function handleMessage(
       // yet (static server boot, or a long `npm install`). Poll the port and
       // nudge a reload once it's actually reachable so the first paint isn't a
       // "Preview not reachable yet" 502 from the proxy.
-      void waitForPort(msg.appPort).then((up) => {
+      void waitForPort(appPort).then((up) => {
         if (up && session.previewSlot === slot) {
           send({ type: "preview_reload", id: "broadcast", slot });
         }

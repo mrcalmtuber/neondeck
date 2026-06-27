@@ -100,7 +100,7 @@ export function LiveView() {
         if (!bootingRef.current) return; // already became ready
         setBooting(false);
         termBus.write(
-          `\r\n\x1b[33m⚠️ App didn't respond on port ${port} within 2 min — check the terminal output above (wrong port or start command?).\x1b[0m\r\n`,
+          `\r\n\x1b[33m⚠️ App didn't start within 2 min — check the terminal output above (build error or wrong start command?).\x1b[0m\r\n`,
         );
       }, 120_000);
     } catch (err) {

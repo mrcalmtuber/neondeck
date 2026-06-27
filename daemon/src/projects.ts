@@ -68,7 +68,7 @@ const BLUEPRINTS: Record<Blueprint, BlueprintDef> = {
           name: "react-vite-app",
           private: true,
           type: "module",
-          scripts: { dev: "vite --host --port 3000", build: "vite build" },
+          scripts: { dev: "vite --host --port ${PORT:-3000}", build: "vite build" },
           dependencies: { react: "^18.3.1", "react-dom": "^18.3.1" },
           devDependencies: { vite: "^5.4.0", "@vitejs/plugin-react": "^4.3.1" },
         },
