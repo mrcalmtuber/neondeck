@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { signIn, signUp, signInWithGoogle, getRedirectError } from "../lib/firebaseClient";
-import { useStore } from "../lib/store";
 import { isSafari } from "../lib/browser";
 import { BRAND_LABEL } from "../lib/brand";
 import { TIER_LIST } from "@ide/shared";
@@ -84,18 +83,6 @@ export function AuthGateway() {
     }
   }
 
-  /**
-   * Dev-only local sign-in. Sets a token-less "local-dev" session and lets App's
-   * connect effect attempt the daemon with no token. When the daemon runs with
-   * IDE_TRUST_LOOPBACK on a loopback host it grants the dev user → daemon mode;
-   * otherwise it rejects the token-less hello and App falls back to in-browser
-   * mode. Either way the dashboard loads — useful for Safari where Google is
-   * blocked. Stripped from production builds (import.meta.env.DEV).
-   */
-  function skip() {
-    useStore.getState().setSession({ token: null, userId: "local-dev", email: "dev@local" });
-  }
-
   return (
     <div className="auth-gateway">
       <div className="auth-card glass">
@@ -157,12 +144,6 @@ export function AuthGateway() {
             <p className="muted auth-hint">
               Sign in with Google is unavailable in Safari — use email &amp; password.
             </p>
-          )}
-
-          {import.meta.env.DEV && (
-            <button type="button" className="btn-ghost wide" onClick={skip} disabled={busy}>
-              ⏭ Continue as local dev (DEV)
-            </button>
           )}
 
           <div className="auth-switch">
