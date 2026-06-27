@@ -7,6 +7,8 @@ import { Settings } from "./components/Settings";
 import { AuthGateway } from "./components/AuthGateway";
 import { Paywall } from "./components/Paywall";
 import { SubscriptionModal } from "./components/SubscriptionModal";
+import { AdminDashboard } from "./components/AdminDashboard";
+import { MaintenanceOverlay } from "./components/MaintenanceOverlay";
 import { daemon } from "./lib/daemonClient";
 import { getStoredGithubToken } from "./lib/githubAuth";
 import { currentSession, onAuthChange } from "./lib/firebaseClient";
@@ -37,6 +39,8 @@ export function App() {
   const setConn = useStore((s) => s.setConn);
   const connectNonce = useStore((s) => s.connectNonce);
   const connError = useStore((s) => s.connError);
+  const notice = useStore((s) => s.notice);
+  const setNotice = useStore((s) => s.setNotice);
 
   // Apply the saved theme to the document root.
   useEffect(() => {
@@ -90,7 +94,9 @@ export function App() {
     if (useStore.getState().conn === "connected") return;
     inFlightRef.current = true;
     const uid = session.userId; // result is stale only if the session changes
-    setConn("connecting");
+    // Preserve a "reconnecting" label across the attempt (set by daemon.onDrop)
+    // so a transient drop reads "Reconnecting…" instead of a fresh "Connecting…".
+    setConn(useStore.getState().conn === "reconnecting" ? "reconnecting" : "connecting");
     ensureUserDoc(session); // best-effort users/{uid} upsert
     (async () => {
       try {
@@ -137,7 +143,21 @@ export function App() {
     }
   }, [session, authReady, conn, setConn]);
 
-  // Live token meter + paywall pushed from the daemon.
+  // Auto-reconnect on an unexpected socket drop (precaution for flaky / mobile
+  // networks + the daemon's heartbeat terminate). Bumping the connect nonce reuses
+  // the connect effect above, which also re-opens the active project.
+  useEffect(() => {
+    daemon.onDrop = () => {
+      if (!useStore.getState().session) return; // signed out → stay down
+      useStore.getState().setConn("reconnecting");
+      useStore.getState().requestConnect();
+    };
+    return () => {
+      daemon.onDrop = null;
+    };
+  }, []);
+
+  // Live token meter + paywall + admin/maintenance/notice pushed from the daemon.
   useEffect(() => {
     if (conn !== "connected" || transport !== "daemon") return;
     return daemon.onMessage((m) => {
@@ -145,9 +165,23 @@ export function App() {
       else if (m.type === "paywall") {
         setUsage(m.usage);
         setPaywall({ usage: m.usage, message: m.message });
+      } else if (m.type === "admin_state") {
+        useStore.getState().setAdminSessions(m.sessions);
+        useStore.getState().setMaintenance(m.maintenance);
+      } else if (m.type === "maintenance_changed") {
+        useStore.getState().setMaintenance(m.maintenance);
+      } else if (m.type === "notice") {
+        useStore.getState().setNotice({ level: m.level, text: m.text });
       }
     });
   }, [conn, transport, setUsage, setPaywall]);
+
+  // Auto-dismiss a transient notice toast.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice, setNotice]);
 
   // Returning from Stripe Checkout: refresh tier/usage and clean the URL.
   useEffect(() => {
@@ -181,7 +215,9 @@ export function App() {
             </button>
           </>
         ) : (
-          <div className="muted">Connecting to your workspace…</div>
+          <div className="muted">
+            {conn === "reconnecting" ? "Reconnecting…" : "Connecting to your workspace…"}
+          </div>
         )}
       </div>
     );
@@ -193,6 +229,8 @@ export function App() {
         <Dashboard />
       ) : view === "settings" ? (
         <Settings />
+      ) : view === "admin" ? (
+        <AdminDashboard />
       ) : view === "hub" ? (
         <Hub />
       ) : (
@@ -200,6 +238,20 @@ export function App() {
       )}
       <Paywall />
       <SubscriptionModal />
+      {/* MAINTENANCE (temporary — remove later) */}
+      <MaintenanceOverlay />
+      {notice && (
+        <div
+          className={`notice-toast ${notice.level}`}
+          role="status"
+          onClick={() => setNotice(null)}
+        >
+          <span>{notice.text}</span>
+          <button className="notice-x" aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
     </>
   );
 }

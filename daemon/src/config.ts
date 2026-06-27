@@ -81,6 +81,12 @@ export interface DaemonConfig {
   githubClientId: string;
   githubClientSecret: string;
 
+  // ---- Admin ops ----
+  /** Login emails granted admin access (the ops dashboard + maintenance toggle).
+   *  From ADMIN_EMAILS (comma-separated); compared lowercased against the user's
+   *  Firebase email. Defaults to the owner so the dashboard works out of the box. */
+  adminEmails: string[];
+
   /** Directory holding cross-user metering/account ledgers (hidden from Hub). */
   metaDir: string;
 }
@@ -187,6 +193,12 @@ export function loadConfig(argv: string[]): DaemonConfig {
     // GitHub OAuth (per-user project sync). Off unless both are set.
     githubClientId: process.env.GITHUB_OAUTH_CLIENT_ID ?? "",
     githubClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET ?? "",
+
+    // Admin ops — who can see the dashboard + flip maintenance.
+    adminEmails: (process.env.ADMIN_EMAILS ?? "jbondgamer911@gmail.com")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
 
     metaDir: path.join(projectsRoot, ".ide-meta"),
   };

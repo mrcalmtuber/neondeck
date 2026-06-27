@@ -214,6 +214,25 @@ export interface StopAgentRequest {
   id: string;
 }
 
+// ---- Admin ops (only honored when the session's email is in ADMIN_EMAILS;
+// the daemon rejects these from non-admins). ----
+export interface AdminSubscribeRequest {
+  type: "admin_subscribe";
+  id: string;
+}
+export interface AdminCancelAgentRequest {
+  type: "admin_cancel_agent";
+  id: string;
+  /** Target session to cancel the agent on (from AdminSessionInfo.sessionId). */
+  sessionId: string;
+}
+export interface AdminSetMaintenanceRequest {
+  type: "admin_set_maintenance";
+  id: string;
+  on: boolean;
+  message: string;
+}
+
 // Feature A — inline AI
 export interface AiExplainRequest {
   type: "ai_explain";
@@ -343,11 +362,33 @@ export type ClientMessage =
   | DbCreateTableRequest
   | ApproveToolRequest
   | StartTunnelRequest
-  | StopTunnelRequest;
+  | StopTunnelRequest
+  | AdminSubscribeRequest
+  | AdminCancelAgentRequest
+  | AdminSetMaintenanceRequest;
 
 // ---------------------------------------------------------------------------
 // Daemon -> Browser
 // ---------------------------------------------------------------------------
+
+/** Maintenance lockout state. When `on`, non-admins are fully locked out. */
+export interface MaintenanceState {
+  on: boolean;
+  message: string;
+}
+
+/** A live session row for the admin dashboard. */
+export interface AdminSessionInfo {
+  sessionId: string;
+  email: string | null;
+  authMode: "firebase" | "dev";
+  project: string | null;
+  agentRunning: boolean;
+  agentStep: number | null;
+  procCount: number;
+  previewActive: boolean;
+  connectedAtMs: number;
+}
 
 export interface HelloResponse {
   type: "hello_ok";
@@ -365,6 +406,10 @@ export interface HelloResponse {
   usage: UsageSnapshot;
   /** Whether the daemon has Stripe configured (gates the checkout buttons). */
   billingEnabled: boolean;
+  /** Whether this user is an admin (email in ADMIN_EMAILS) — gates the admin dashboard. */
+  isAdmin: boolean;
+  /** Current maintenance state (admins are exempt; non-admins get a full lockout). */
+  maintenance: MaintenanceState;
 }
 
 export interface ProjectsResponse {
@@ -561,6 +606,26 @@ export interface ErrorMessage {
   message: string;
 }
 
+// ---- Admin ops + maintenance (daemon -> browser) ----
+export interface AdminStateMessage {
+  type: "admin_state";
+  id: string; // request id, or "broadcast"
+  sessions: AdminSessionInfo[];
+  maintenance: MaintenanceState;
+}
+export interface MaintenanceChangedMessage {
+  type: "maintenance_changed";
+  id: string; // "broadcast"
+  maintenance: MaintenanceState;
+}
+/** A lightweight toast pushed to a user (e.g. "an admin stopped your agent"). */
+export interface NoticeMessage {
+  type: "notice";
+  id: string;
+  level: "info" | "warn";
+  text: string;
+}
+
 export type ServerMessage =
   | HelloResponse
   | ProjectsResponse
@@ -592,4 +657,7 @@ export type ServerMessage =
   | TunnelStatusMessage
   | UsageUpdateMessage
   | PaywallMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | AdminStateMessage
+  | MaintenanceChangedMessage
+  | NoticeMessage;

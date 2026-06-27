@@ -7,6 +7,8 @@ import {
   type ServerMessage,
   type RuntimeMode,
   type ProcessInfo,
+  type AdminSessionInfo,
+  type MaintenanceState,
 } from "@ide/shared";
 import { allowedOriginFor, loopbackDevAllowed, type DaemonConfig } from "./config.js";
 import { buildTree, readFile, createEntry, writeFileSync, deleteEntry } from "./workspace.js";
@@ -92,6 +94,18 @@ interface Session {
   // LOCAL DEV ONLY: this connection earned loopback dev-trust (see
   // loopbackDevAllowed) — a token-less hello may use the local "dev" user.
   allowLoopbackDev: boolean;
+  // ---- Admin ops ----
+  /** Stable id for this connection (used to target it from the admin dashboard). */
+  id: string;
+  /** Authenticated email (for the admin dashboard); null until hello. */
+  email: string | null;
+  /** True when this user's email is in ADMIN_EMAILS. */
+  isAdmin: boolean;
+  /** This admin is watching the live ops dashboard (gets admin_state pushes). */
+  adminSubscribed: boolean;
+  connectedAtMs: number;
+  /** This connection's sender, stored so we can broadcast to every session. */
+  send: (m: ServerMessage) => void;
 }
 
 let slotCounter = 0;
@@ -175,6 +189,13 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
 
   wss.on("connection", (ws, req) => handleConnection(ws, req, config, proxy, store));
   httpServer.on("close", () => proxy.close());
+
+  // Keep the ops dashboard fresh (agent running/step, proc counts) while an admin
+  // is watching. Cheap no-op when nobody is subscribed.
+  setInterval(() => {
+    if ([...activeSessions].some((s) => s.adminSubscribed)) broadcastAdminState();
+  }, 3000).unref();
+
   return wss;
 }
 
@@ -268,12 +289,39 @@ function handleConnection(
     syncTimer: null,
     suppressSyncUntil: 0,
     allowLoopbackDev: loopbackDevAllowed(req, config),
+    id: randomUUID(),
+    email: null,
+    isAdmin: false,
+    adminSubscribed: false,
+    connectedAtMs: Date.now(),
+    send: () => {},
   };
   activeSessions.add(session);
 
   const send = (msg: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
+  session.send = send;
+
+  // WS heartbeat: ping each client; a socket that misses a pong is half-open
+  // (common on phones / flaky Wi-Fi / proxies) and gets terminated so its session
+  // is cleaned up instead of lingering. Browsers auto-reply to protocol pings.
+  let isAlive = true;
+  ws.on("pong", () => {
+    isAlive = true;
+  });
+  const heartbeat = setInterval(() => {
+    if (!isAlive) {
+      ws.terminate(); // triggers ws.on("close") → full cleanup below
+      return;
+    }
+    isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      /* socket already closing */
+    }
+  }, 30_000);
 
   // Live RAM sampling for the process dashboard.
   session.ramTimer = setInterval(async () => {
@@ -309,6 +357,7 @@ function handleConnection(
     releasePreviewPort(session.previewPort); // return this session's preview port to the pool
     session.watcher?.close();
     if (session.ramTimer) clearInterval(session.ramTimer);
+    clearInterval(heartbeat);
     session.tunnel?.close();
     try {
       session.db?.close();
@@ -316,6 +365,7 @@ function handleConnection(
       /* already closed */
     }
     activeSessions.delete(session);
+    broadcastAdminState(); // a session left — refresh the ops dashboard
     console.log("[daemon] client disconnected, sandbox cleaned up");
   });
 }
@@ -367,6 +417,34 @@ const SYNC_DEBOUNCE_MS = 5000;
 
 /** Live sessions, so a graceful shutdown can flush every open project to GitHub. */
 const activeSessions = new Set<Session>();
+
+// ---- Admin ops + maintenance ----
+// MAINTENANCE (temporary — remove later): in-memory flag flipped by an admin.
+// Resets on restart (fine for a diskless free instance). Non-admins are locked out.
+let maintenance: MaintenanceState = { on: false, message: "" };
+
+/** Snapshot every live session for the admin dashboard. */
+function buildAdminState(): AdminSessionInfo[] {
+  return [...activeSessions].map((s) => ({
+    sessionId: s.id,
+    email: s.email,
+    authMode: s.authMode,
+    project: s.activeProject,
+    agentRunning: s.agent.abort != null,
+    agentStep: s.agent.abort != null ? s.agent.step : null,
+    procCount: s.procs.size,
+    previewActive: s.previewSlot != null,
+    connectedAtMs: s.connectedAtMs,
+  }));
+}
+
+/** Push the live ops state to every subscribed admin (no-op if none watching). */
+function broadcastAdminState(): void {
+  const sessions = buildAdminState();
+  for (const s of activeSessions) {
+    if (s.adminSubscribed) s.send({ type: "admin_state", id: "broadcast", sessions, maintenance });
+  }
+}
 
 /** Stable cache key for this session's user (mirrors the FS jail). */
 function sessionStorageKey(session: Session): string {
@@ -476,6 +554,8 @@ async function handleMessage(
       });
       session.userId = user.userId;
       session.authMode = user.mode;
+      session.email = user.email ?? null;
+      session.isAdmin = !!user.email && config.adminEmails.includes(user.email.toLowerCase());
       session.projectRoot = userRoot(config, user);
       // v7: a GitHub token (browser-held) enables per-user project sync this session.
       session.githubToken = msg.githubToken ?? null;
@@ -498,7 +578,10 @@ async function handleMessage(
         authMode: user.mode,
         usage: store.snapshot(user.userId, tier),
         billingEnabled: billingEnabled(config),
+        isAdmin: session.isAdmin,
+        maintenance,
       });
+      broadcastAdminState(); // a (re)identified session — refresh the ops dashboard
 
       // Stripe is the source of truth for the tier. Reconcile in the background
       // (handles a wiped ledger on a diskless host, or a webhook that landed under
@@ -721,6 +804,17 @@ async function handleMessage(
 
     // ---- Agent ----
     case "agent_prompt": {
+      // MAINTENANCE (temporary — remove later): block non-admins while maintenance
+      // is on (the client also shows a full-screen lockout; this is defense-in-depth).
+      if (maintenance.on && !session.isAdmin) {
+        send({
+          type: "notice",
+          id: msg.id,
+          level: "warn",
+          text: maintenance.message || "NeonDeck is under maintenance — please try again soon.",
+        });
+        return send({ type: "agent_done", id: msg.id, reason: "stopped" });
+      }
       const wsDir = requireWs(session);
       // Free MAY use the agent (reasoning + file edits) but NOT run shell commands —
       // code execution stays Pro+. The hidden Free daily cap is enforced by the meter.
@@ -749,12 +843,40 @@ async function handleMessage(
             send({ type: "agent_approval", id: msg.id, toolName, summary, detail });
           }),
       });
+      broadcastAdminState(); // run finished — clear "running" on the ops dashboard
       return;
     }
 
     // Feature 3 — Copilot "Approve Edit" / reject for a parked tool call.
     case "approve_tool": {
       session.agent.pendingApproval?.(msg.approve);
+      return;
+    }
+
+    // ---- Admin ops (rejected for non-admins; the daemon is the authority) ----
+    case "admin_subscribe": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      session.adminSubscribed = true;
+      return send({ type: "admin_state", id: msg.id, sessions: buildAdminState(), maintenance });
+    }
+    case "admin_cancel_agent": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      const target = [...activeSessions].find((s) => s.id === msg.sessionId);
+      if (target) {
+        target.agent.stopRequested = true;
+        target.agent.abort?.abort();
+        target.agent.pendingApproval?.(false); // unblock any parked approval
+        target.send({ type: "notice", id: "broadcast", level: "warn", text: "An admin stopped your agent." });
+      }
+      broadcastAdminState();
+      return;
+    }
+    case "admin_set_maintenance": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      // MAINTENANCE (temporary — remove later)
+      maintenance = { on: msg.on, message: msg.message };
+      for (const s of activeSessions) s.send({ type: "maintenance_changed", id: "broadcast", maintenance });
+      broadcastAdminState();
       return;
     }
 

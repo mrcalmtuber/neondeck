@@ -10,6 +10,8 @@ import type {
   TunnelState,
   Tier,
   UsageSnapshot,
+  AdminSessionInfo,
+  MaintenanceState,
 } from "@ide/shared";
 import { TIERS } from "@ide/shared";
 import type { AuthSession } from "./firebaseClient";
@@ -21,7 +23,7 @@ export interface ChatMessage {
   toolName?: string;
 }
 
-export type ConnState = "disconnected" | "connecting" | "connected";
+export type ConnState = "disconnected" | "connecting" | "connected" | "reconnecting";
 /** The daemon is the only transport. (An in-tab VFS "browser mode" was removed —
  *  it kept leaking back in on errors and stranding users on a stale workspace.) */
 export type Transport = "daemon";
@@ -32,7 +34,7 @@ export type Transport = "daemon";
  *   "hub"       — legacy daemon project hub (kept as a fallback route)
  *   "ide"       — the single-view workspace once a project is active
  */
-export type View = "dashboard" | "hub" | "ide" | "settings";
+export type View = "dashboard" | "hub" | "ide" | "settings" | "admin";
 /** Center workspace view: live preview or the code editor (overlays preview). */
 /** Which single pane is shown on a phone (the 3-column IDE collapses to one). */
 export type MobilePane = "agent" | "center" | "files";
@@ -71,6 +73,8 @@ export interface HelloInfoState {
   authMode: "firebase" | "dev";
   usage: UsageSnapshot;
   billingEnabled: boolean;
+  isAdmin: boolean;
+  maintenance: MaintenanceState;
 }
 
 interface AppState {
@@ -110,6 +114,19 @@ interface AppState {
   requestConnect: () => void;
   paywall: { usage: UsageSnapshot; message: string } | null;
   setPaywall: (p: { usage: UsageSnapshot; message: string } | null) => void;
+
+  // ---- admin ops + maintenance ----
+  isAdmin: boolean;
+  /** MAINTENANCE (temporary — remove later): current lockout state. */
+  maintenance: MaintenanceState;
+  setMaintenance: (m: MaintenanceState) => void;
+  /** Live session list for the admin dashboard (from admin_state pushes). */
+  adminSessions: AdminSessionInfo[];
+  setAdminSessions: (s: AdminSessionInfo[]) => void;
+  /** Transient toast (e.g. "an admin stopped your agent"). */
+  notice: { level: "info" | "warn"; text: string } | null;
+  setNotice: (n: { level: "info" | "warn"; text: string } | null) => void;
+
   /** Current tier, derived from the latest usage snapshot. */
   tier: () => Tier;
   /** Local billing simulation: instantly grant a paid tier (no Stripe). */
@@ -247,6 +264,15 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ connectNonce: s.connectNonce + 1, conn: "disconnected", connError: null })),
   paywall: null,
   setPaywall: (paywall) => set({ paywall }),
+
+  isAdmin: false,
+  maintenance: { on: false, message: "" },
+  setMaintenance: (maintenance) => set({ maintenance }),
+  adminSessions: [],
+  setAdminSessions: (adminSessions) => set({ adminSessions }),
+  notice: null,
+  setNotice: (notice) => set({ notice }),
+
   tier: () => (get().usage?.tier ?? 0) as Tier,
 
   simulateUpgrade: (tier) =>

@@ -62,6 +62,22 @@ also survives redeploys; the daemon never persists it. Off entirely when the var
 Scope requested is `repo` (projects can be private). Disconnect (in Settings) clears the stored
 token. If a GitHub call fails, the IDE keeps working — sync is best-effort.
 
+## Admin dashboard & maintenance
+
+Admins (login emails in `ADMIN_EMAILS`) get **Settings → 🛡 Admin**, a live ops dashboard:
+- **Active sessions** — every connected user, their open project, whether the agent is running (and
+  its step), process count, and how long they've been connected. **Cancel agent** stops a stuck
+  run on any session.
+- **Maintenance mode** — a toggle that **locks every non-admin out** with a red full-screen notice
+  and refuses agent runs (admins keep full access). It flips live (no redeploy) and resets if the
+  service restarts — handy for pushing a risky change or pausing usage during a test.
+
+Set `ADMIN_EMAILS` in Render (Environment, comma-separated; matched lowercased against the user's
+Firebase email). It's **optional** — it defaults to the owner email in code, so the dashboard works
+out of the box; set it to add teammates or change the admin. All admin actions are re-checked
+server-side, so non-admins can't reach them even if the UI were forced. Single Render instance →
+the dashboard sees every connected user.
+
 ## Auto-deploy (push → live)
 
 `render.yaml` sets `autoDeploy: true`, so once the repo is connected, **every push to the

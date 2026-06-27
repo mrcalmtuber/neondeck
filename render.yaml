@@ -44,6 +44,11 @@ services:
         sync: false
       - key: GITHUB_OAUTH_CLIENT_SECRET
         sync: false
+      # ---- Admin dashboard + maintenance. Comma-separated login emails granted
+      # admin (the ops dashboard: view sessions, cancel agents, maintenance toggle).
+      # Optional — defaults to the owner email in code; set to override / add admins. ----
+      - key: ADMIN_EMAILS
+        sync: false
       # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed: the daemon auto-trusts
       # same-origin requests (web + API + WS share one origin), and Stripe's checkout
       # return URL is auto-derived from Render's injected RENDER_EXTERNAL_URL. Only set

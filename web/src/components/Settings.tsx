@@ -43,6 +43,7 @@ export function Settings() {
   const simulateUpgrade = useStore((s) => s.simulateUpgrade);
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
+  const isAdmin = useStore((s) => s.isAdmin);
 
   const [busyTier, setBusyTier] = useState<Tier | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +258,19 @@ export function Settings() {
                 </button>
               )}
             </div>
+          </section>
+        )}
+
+        {/* Admin (owner only — gated by ADMIN_EMAILS on the daemon) */}
+        {isAdmin && (
+          <section className="settings-card glass">
+            <h3>🛡 Admin</h3>
+            <p className="muted small">
+              View active sessions, cancel a stuck agent, and toggle maintenance mode.
+            </p>
+            <button className="btn-neon sm" onClick={() => setView("admin")}>
+              Open admin dashboard
+            </button>
           </section>
         )}
 

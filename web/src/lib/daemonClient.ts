@@ -18,6 +18,7 @@ import {
   type TunnelStatusMessage,
   type UsageSnapshot,
   type Tier,
+  type MaintenanceState,
 } from "@ide/shared";
 
 /**
@@ -64,6 +65,8 @@ export interface HelloInfo {
   authMode: "firebase" | "dev";
   usage: UsageSnapshot;
   billingEnabled: boolean;
+  isAdmin: boolean;
+  maintenance: MaintenanceState;
 }
 
 /**
@@ -95,7 +98,18 @@ export class DaemonClient {
     authMode: "dev",
     usage: { tier: 0, tokensUsed: 0, tokensLimit: 0, period: "", limitReached: false },
     billingEnabled: false,
+    isAdmin: false,
+    maintenance: { on: false, message: "" },
   };
+
+  // ---- auto-reconnect (precaution for flaky/mobile networks) ----
+  /** Set true by an explicit disconnect() so a deliberate close isn't reconnected. */
+  private intentional = false;
+  /** True once the handshake completed, so we only reconnect a DROP, not a failed
+   *  initial connect. */
+  private handshakeOk = false;
+  /** App-registered hook fired when an established socket drops unexpectedly. */
+  onDrop: (() => void) | null = null;
 
   /** Set the Firebase ID token + userId sent on the next handshake. */
   setAuth(token: string | null, userId: string | null): void {
@@ -120,10 +134,23 @@ export class DaemonClient {
    * caller show the "couldn't reach the daemon · Retry" screen.
    */
   async connect(timeoutMs = 6000): Promise<HelloInfo> {
+    // A (re)connect attempt is, by definition, not an intentional close.
+    this.intentional = false;
+    this.handshakeOk = false;
     // Re-entry guard: never leave an orphaned socket from a prior attempt (e.g. a
     // re-fired effect or StrictMode double-invoke). A stale socket can otherwise
-    // shadow the live one and the handshake silently stalls.
-    if (this.ws) this.disconnect();
+    // shadow the live one and the handshake silently stalls. Close it WITHOUT
+    // marking intent (so it doesn't suppress a later legitimate reconnect).
+    if (this.ws) {
+      const stale = this.ws;
+      this.ws = null;
+      try {
+        stale.close();
+      } catch {
+        /* already closing */
+      }
+    }
+    this.openedProject = null;
 
     // Fast reachability pre-flight: turns "daemon down / wrong port / blocked"
     // into an instant, specific error instead of a multi-second socket stall.
@@ -182,6 +209,12 @@ export class DaemonClient {
         // No-op once the handshake has resolved; only matters if the socket dies
         // before `hello_ok`, in which case we reject so the caller can fall back.
         finish(() => reject(new Error("Daemon connection closed before handshake.")));
+        // Post-handshake DROP (mobile/flaky net, server heartbeat terminate) that
+        // we didn't ask for → let the app auto-reconnect + restore the workspace.
+        if (this.handshakeOk && !this.intentional) {
+          this.handshakeOk = false;
+          this.onDrop?.();
+        }
       };
       ws.onopen = async () => {
         dbg("ws open — sending hello");
@@ -206,7 +239,10 @@ export class DaemonClient {
               authMode: hello.authMode,
               usage: hello.usage,
               billingEnabled: hello.billingEnabled,
+              isAdmin: hello.isAdmin,
+              maintenance: hello.maintenance,
             };
+            this.handshakeOk = true;
             dbg("hello_ok — connected");
             finish(() => resolve(this.info));
           } else {
@@ -221,6 +257,8 @@ export class DaemonClient {
   }
 
   disconnect(): void {
+    this.intentional = true; // a deliberate close — don't auto-reconnect
+    this.handshakeOk = false;
     this.ws?.close();
     this.ws = null;
     this.openedProject = null;
@@ -353,6 +391,20 @@ export class DaemonClient {
   /** Flip the daemon's interrupt: break the loop + kill running children. */
   stopAgent(): void {
     this.send({ type: "stop_agent", id: nextId() });
+  }
+
+  // -------- Admin ops (daemon rejects these from non-admins) --------
+  /** Start receiving live admin_state pushes for the ops dashboard. */
+  adminSubscribe(): void {
+    this.send({ type: "admin_subscribe", id: nextId() });
+  }
+  /** Cancel the agent run on another user's session. */
+  adminCancelAgent(sessionId: string): void {
+    this.send({ type: "admin_cancel_agent", id: nextId(), sessionId });
+  }
+  /** MAINTENANCE (temporary — remove later): flip the lockout for non-admins. */
+  adminSetMaintenance(on: boolean, message: string): void {
+    this.send({ type: "admin_set_maintenance", id: nextId(), on, message });
   }
 
   // -------- Hub / projects --------

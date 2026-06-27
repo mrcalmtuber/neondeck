@@ -80,10 +80,13 @@ export interface AgentState {
   abort: AbortController | null;
   /** Resolver for an in-flight Copilot approval (resolved by approve_tool). */
   pendingApproval: ((approve: boolean) => void) | null;
+  /** Current loop step (1-based), surfaced to the admin dashboard. A run is
+   *  "active" when `abort != null`. */
+  step: number;
 }
 
 export function newAgentState(): AgentState {
-  return { history: [], stopRequested: false, abort: null, pendingApproval: null };
+  return { history: [], stopRequested: false, abort: null, pendingApproval: null, step: 0 };
 }
 
 export interface AgentDeps {
@@ -194,6 +197,7 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
       if (state.stopRequested) break;
+      state.step = step + 1; // surfaced to the admin dashboard
       send({
         type: "agent_status",
         id: promptId,
