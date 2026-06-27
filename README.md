@@ -11,8 +11,9 @@
 
 A hybrid web IDE. The UI runs as a normal website; code, files, and Docker
 containers execute on the **daemon** node — your own machine for local dev, or a
-headless server (e.g. a Raspberry Pi 5) for a shared production deployment. The
-browser talks to the daemon over a single WebSocket bridge.
+cloud host for a shared production deployment (it ships as a single Docker
+service — see [DEPLOY.md](./DEPLOY.md)). The browser talks to the daemon over a
+single WebSocket bridge.
 
 ## Architecture
 
@@ -84,18 +85,14 @@ The agent provider key lives only in the daemon's env (`DEEPSEEK_API_KEY` /
 it. Open the site, sign in with Firebase email/password (or create an account),
 then drive the agent.
 
-### Headless production node (Raspberry Pi 5)
+### Deploy to production
 
-```bash
-# ARM64 / node:alpine images are pulled automatically — nothing forces a platform.
-DEEPSEEK_API_KEY=sk-... \
-FIREBASE_PROJECT_ID=neondeck-production \
-IDE_ALLOWED_ORIGINS=https://app.neondeck.io \
-npm run daemon -- --root ~/neondeck-projects --host 0.0.0.0 --port 5000
-```
-
-Build the web app with `VITE_DAEMON_URL=wss://node.neondeck.io` so the browser
-dials the Pi instead of localhost.
+NeonDeck ships as a **single Docker service** — one process serves the web app,
+REST API, WebSocket, and live previews on one port (same-origin, so no separate
+web build or origin allow-list is needed). The supported path is **Render's free
+tier**; see **[DEPLOY.md](./DEPLOY.md)** for the full runbook (one service,
+auto-deploy on push, optional Stripe billing, optional per-user GitHub project
+sync, and custom domains).
 
 ## ⚠️ Verify before shipping
 
