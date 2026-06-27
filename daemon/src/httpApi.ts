@@ -82,12 +82,33 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
             /* token stays empty → the page reports failure */
           }
         }
+        // Deliver the token to whichever origin the app is actually on. The popup
+        // may be served from the onrender URL, a custom domain (same host as the
+        // opener), or — in local dev — a different port than the web app. So we
+        // postMessage to each candidate origin: the request's own origin AND the
+        // configured appOrigin. The browser only delivers to the one matching
+        // window.opener's real origin and drops the rest, so this never leaks the
+        // token and needs no IDE_APP_ORIGIN change when you add a custom domain.
+        const rawHost = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "")
+          .split(",")[0]
+          .trim();
+        // Sanitize — it's embedded in the HTML below; only allow a real host[:port].
+        const reqHost = /^[a-zA-Z0-9.\-:]+$/.test(rawHost) ? rawHost : "";
+        const fwdProto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim();
+        const reqProto =
+          fwdProto === "https" || fwdProto === "http"
+            ? fwdProto
+            : (req.socket as unknown as { encrypted?: boolean }).encrypted
+              ? "https"
+              : "http";
+        const targets = [
+          ...new Set([reqHost ? `${reqProto}://${reqHost}` : "", config.appOrigin].filter(Boolean)),
+        ];
         const msg = JSON.stringify({ type: "github-oauth", token, state });
-        const target = JSON.stringify(config.appOrigin);
         const html = `<!doctype html><meta charset="utf-8"><title>Connecting GitHub…</title>
 <body style="font-family:system-ui;background:#0b0f19;color:#e8f0ff;display:grid;place-items:center;height:100vh">
 <p>${token ? "GitHub connected — you can close this window." : "GitHub connection failed."}</p>
-<script>(function(){try{window.opener&&window.opener.postMessage(${msg}, ${target});}catch(e){}setTimeout(function(){window.close();},300);})();</script>
+<script>(function(){var T=${JSON.stringify(targets)},M=${msg};try{if(window.opener)T.forEach(function(o){try{window.opener.postMessage(M,o);}catch(e){}});}catch(e){}setTimeout(function(){window.close();},300);})();</script>
 </body>`;
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
         res.end(html);
