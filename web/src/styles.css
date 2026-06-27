@@ -3068,22 +3068,28 @@ textarea:focus-visible {
   backdrop-filter: blur(2px);
 }
 .tour-card {
-  position: relative;
-  width: 100%;
-  max-width: 420px;
-  margin-bottom: 6vh;
+  position: fixed;
+  width: min(420px, calc(100vw - 36px));
   border-radius: 18px;
   border: 1px solid var(--accent3);
-  padding: 26px 24px 20px;
+  padding: 26px 24px 22px;
   text-align: center;
   box-shadow: 0 0 0 1px rgba(121, 40, 202, 0.25), 0 18px 60px rgba(0, 0, 0, 0.55),
     0 0 50px rgba(121, 40, 202, 0.35);
-  animation: tour-pop 0.22s ease;
+  animation: tour-fade 0.25s ease;
+  /* Glide smoothly between step positions ("move around"). top/left are always
+     percentages + a translate, so any move interpolates cleanly. */
+  transition: top 0.45s var(--ease), left 0.45s var(--ease), transform 0.45s var(--ease);
 }
-@keyframes tour-pop {
-  from { opacity: 0; transform: translateY(12px) scale(0.98); }
-  to { opacity: 1; transform: none; }
+@keyframes tour-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
+.tour-at-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.tour-at-left   { top: 50%; left: 3%;  transform: translate(0, -50%); }
+.tour-at-right  { top: 50%; left: 97%; transform: translate(-100%, -50%); }
+.tour-at-top    { top: 8%;  left: 50%; transform: translate(-50%, 0); }
+.tour-at-bottom { top: 92%; left: 50%; transform: translate(-50%, -100%); }
 .tour-skip {
   position: absolute;
   top: 10px;
@@ -3096,6 +3102,18 @@ textarea:focus-visible {
   padding: 6px;
 }
 .tour-skip:hover { color: var(--text); }
+.tour-skip-tiny {
+  display: inline-block;
+  margin-top: 12px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: 0.65;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.tour-skip-tiny:hover { opacity: 1; color: var(--text); text-decoration: underline; }
 .tour-emoji { font-size: 44px; line-height: 1; margin-bottom: 10px; }
 .tour-title {
   font-size: 21px;
@@ -3278,12 +3296,107 @@ textarea:focus-visible {
   }
 
   /* ---- Tour fits the smallest iPhones (12 mini → 17 Pro Max) ---- */
-  .tour-card {
-    max-width: none;
-    margin-bottom: 4vh;
+  /* On phones the card stays pinned bottom-centre regardless of step position
+     (overrides .tour-at-* so it never glides off a small screen). */
+  .tour-card,
+  .tour-card.tour-at-center,
+  .tour-card.tour-at-left,
+  .tour-card.tour-at-right,
+  .tour-card.tour-at-top,
+  .tour-card.tour-at-bottom {
+    width: calc(100vw - 24px);
     padding: 22px 18px 18px;
+    top: auto;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    transition: none;
   }
   .tour-emoji { font-size: 38px; }
   .tour-title { font-size: 19px; }
   .tour-body { font-size: 14px; }
+}
+
+/* ===========================================================================
+   Motion layer — smooth, subtle animations across the UI. Pure CSS: enter
+   animations + micro-interactions applied to existing classes. No JS, no layout
+   shift. `backwards` fill keeps the stagger hidden during its delay then reverts
+   to the element's natural state (so card :hover transforms keep working). The
+   prefers-reduced-motion guard at the bottom disables all of it for accessibility.
+   =========================================================================== */
+:root {
+  --ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --dur: 0.22s;
+  --dur-fast: 0.12s;
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* View entrance — fade the whole IDE in on mount. (Opacity only: no transform on
+   the CodeMirror/iframe parents, which avoids any layout/measure quirks.) */
+.ide { animation: fade-in var(--dur) var(--ease) backwards; }
+
+/* Modals & overlays (mount on open → play once; backdrop centers via grid, so
+   scaling the modal is layout-safe) */
+.modal-backdrop, .template-hub-backdrop { animation: fade-in var(--dur-fast) var(--ease) backwards; }
+.modal, .template-hub { animation: pop-in var(--dur) var(--ease) backwards; }
+
+/* Menus / dropdowns (anchored via top/right, not transform → scale is safe) */
+.effort-dropdown, .theme-menu-list, .theme-menu .menu, .account-menu {
+  animation: pop-in var(--dur-fast) var(--ease) backwards;
+}
+
+/* Agent messages & status */
+.msg { animation: fade-up var(--dur) var(--ease) backwards; }
+.status-ticker, .agent-empty { animation: fade-in var(--dur) var(--ease) backwards; }
+
+/* Cards: cascading entrance (backwards keeps hover lift working) */
+.project-card, .blueprint-card, .showcase-card, .template-card, .plan-card, .recipe {
+  animation: fade-up var(--dur) var(--ease) backwards;
+}
+.project-card:nth-child(2), .template-card:nth-child(2), .plan-card:nth-child(2), .recipe:nth-child(2) { animation-delay: 0.04s; }
+.project-card:nth-child(3), .template-card:nth-child(3), .plan-card:nth-child(3), .recipe:nth-child(3) { animation-delay: 0.08s; }
+.project-card:nth-child(4), .template-card:nth-child(4), .recipe:nth-child(4) { animation-delay: 0.12s; }
+.project-card:nth-child(5), .template-card:nth-child(5), .recipe:nth-child(5) { animation-delay: 0.16s; }
+.project-card:nth-child(n + 6), .template-card:nth-child(n + 6), .recipe:nth-child(n + 6) { animation-delay: 0.20s; }
+
+/* Micro-interactions. `button`/`a`/inputs are low-specificity type selectors, so
+   any existing class-specific transitions still win — these only fill gaps. */
+button {
+  transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+button:active:not(:disabled) { transform: scale(0.97); }
+input, textarea, select {
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+a { transition: color var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease); }
+
+/* Smooth lift for recipe cards (project/template cards already transition) */
+.recipe { transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+.recipe:hover { transform: translateY(-2px); box-shadow: 0 0 18px rgba(0, 240, 255, 0.18); }
+
+/* Smooth palette change when switching themes */
+body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
+
+/* Accessibility / safety valve — honor the OS "reduce motion" setting */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
