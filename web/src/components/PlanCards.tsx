@@ -36,16 +36,18 @@ export function PlanCards({
               {t.priceLabel}
               <small>/mo</small>
             </div>
-            <div className="plan-card-tokens">{t.tokenLabel} Agent Tokens/mo</div>
+            <div className="plan-card-tokens">Effort-based pricing</div>
             <div className="plan-card-effort">
               <span className={`effort-pill tier-${t.key}`}>{t.effortLabel}</span>
-              <p className="plan-card-effort-blurb">{t.effortBlurb}</p>
+              <p className="plan-card-effort-blurb">Pay for the reasoning effort you use.</p>
             </div>
             <p className="plan-card-tagline">{t.tagline}</p>
             <ul className="plan-card-perks">
-              {t.perks.map((p) => (
-                <li key={p}>{p}</li>
-              ))}
+              {t.perks
+                .filter((p) => !/token/i.test(p))
+                .map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
             </ul>
             {isCurrent ? (
               <button className="btn-ghost wide" disabled>

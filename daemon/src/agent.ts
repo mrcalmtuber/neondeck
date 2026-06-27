@@ -231,6 +231,16 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
         }
       }
 
+      // Safety net: if the provider didn't report usage for this request, estimate
+      // it (full prompt + output at ~4 chars/token) so consumption is never charged
+      // as 0 — keeps metering honest against real provider billing.
+      if (stepTokens === 0) {
+        const inChars = messages.reduce(
+          (n, m) => n + (typeof m.content === "string" ? m.content.length : 0),
+          0,
+        );
+        stepTokens = Math.ceil((inChars + assistantText.length) / 4);
+      }
       // Charge this step's tokens; halt if the pool is now spent (monthly OR the
       // hidden daily cap — isOver() covers both).
       const snap = deps.meter.record(stepTokens);

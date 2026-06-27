@@ -40,8 +40,6 @@ export function Settings() {
   const setView = useStore((s) => s.setView);
   const setUsage = useStore((s) => s.setUsage);
   const simulateUpgrade = useStore((s) => s.simulateUpgrade);
-  const agentMode = useStore((s) => s.agentMode);
-  const setAgentMode = useStore((s) => s.setAgentMode);
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
 
@@ -183,23 +181,6 @@ export function Settings() {
         {/* Agent defaults */}
         <section className="settings-card glass">
           <h3>Agent defaults</h3>
-          <div className="settings-pref">
-            <span className="muted small">Autonomy</span>
-            <div className="settings-seg">
-              <button
-                className={agentMode === "copilot" ? "on" : ""}
-                onClick={() => setAgentMode("copilot")}
-              >
-                Copilot 🔒
-              </button>
-              <button
-                className={agentMode === "autopilot" ? "on" : ""}
-                onClick={() => setAgentMode("autopilot")}
-              >
-                Autopilot 🚀
-              </button>
-            </div>
-          </div>
           <div className="settings-pref">
             <span className="muted small">Reasoning effort</span>
             <div className="settings-seg">

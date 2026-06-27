@@ -38,8 +38,6 @@ export function AgentPanel() {
   const agentRunning = useStore((s) => s.agentRunning);
   const agentStatus = useStore((s) => s.agentStatus);
   const agentReady = useStore((s) => s.agentReady);
-  const agentMode = useStore((s) => s.agentMode);
-  const setAgentMode = useStore((s) => s.setAgentMode);
   const pendingApproval = useStore((s) => s.pendingApproval);
   const session = useStore((s) => s.session);
   const connError = useStore((s) => s.connError);
@@ -100,37 +98,6 @@ export function AgentPanel() {
             ⚡ Reconnect
           </button>
         )}
-      </div>
-
-      {/* Feature 3 — Copilot vs Autopilot sliding toggle. */}
-      <div
-        className={`mode-toggle ${agentRunning ? "locked" : ""}`}
-        data-mode={agentMode}
-        role="group"
-        aria-label="Agent autonomy mode"
-      >
-        <span className="mode-knob" />
-        <button
-          className={`mode-opt ${agentMode === "copilot" ? "on" : ""}`}
-          onClick={() => !agentRunning && setAgentMode("copilot")}
-          disabled={agentRunning}
-          title="Passive assistant — every file write & command needs your approval"
-        >
-          Copilot 🔒
-        </button>
-        <button
-          className={`mode-opt ${agentMode === "autopilot" ? "on" : ""}`}
-          onClick={() => !agentRunning && setAgentMode("autopilot")}
-          disabled={agentRunning}
-          title="Full autonomy — writes files, installs packages, runs & self-corrects"
-        >
-          Autopilot 🚀
-        </button>
-      </div>
-      <div className="mode-hint muted">
-        {agentMode === "copilot"
-          ? "Copilot proposes; nothing is written or run until you approve it."
-          : "Autopilot acts on its own — chaining edits, installs, and test runs."}
       </div>
 
       <div className="agent-messages" ref={scrollRef}>
