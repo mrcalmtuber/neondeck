@@ -38,6 +38,9 @@ bottom for Fly / Railway / a VM.
   (next section — free, projects sync to each user's own repo), **or** upgrade to a paid instance
   and uncomment the `disk:` block in `render.yaml` (mount `/data`). Render injects `PORT`
   automatically; the daemon reads it.
+- **The monthly token meter is also on that diskless FS** → without a durable store, every user's
+  usage **resets to 0 on each restart/deploy** (they'd get unlimited tokens). Fix it for free by
+  persisting usage to **Firestore** — see **"Persist usage (Firestore)"** below.
 
 ## Connect GitHub (free per-user project persistence)
 
@@ -62,6 +65,26 @@ also survives redeploys; the daemon never persists it. Off entirely when the var
 Scope requested is `repo` (projects can be private). Disconnect (in Settings) clears the stored
 token. If a GitHub call fails, the IDE keeps working — sync is best-effort.
 
+## Persist usage (Firestore)
+
+The per-user **monthly token meter** lives in a JSON ledger on the diskless FS, so a restart/deploy
+wipes it and everyone's usage resets to 0. Point it at **Firestore** (same Firebase project as auth)
+so usage survives. One-time setup:
+
+1. **Get a service-account key:** Firebase console → your project (`neondeck-8cbe0`) → **Project
+   settings → Service accounts → Generate new private key**. This downloads a JSON file. *(This is a
+   server secret — never commit it or ship it to the browser. It is only used for Firestore writes;
+   token verification still uses public certs and needs no secret.)*
+2. **Set it in Render** (service → Environment, `sync:false`): `FIREBASE_SERVICE_ACCOUNT` = the
+   **entire JSON** (paste it as-is, or base64-encode it first if the dashboard mangles newlines).
+   Must be the **same project** as `FIREBASE_PROJECT_ID` so uids match.
+3. **Redeploy.** On boot the daemon logs `[firestore] usage persistence enabled`. Usage is now stored
+   per user in the `neondeck_usage` collection (lazy-loaded on connect, debounced writes, flushed on
+   shutdown). No Firestore? It silently falls back to the local ledger.
+
+Tiers already reconcile from Stripe on connect, so paid plans are unaffected; this is specifically
+about the **token counter**. (Free, durable, no new vendor — it reuses your existing Firebase project.)
+
 ## Admin dashboard & maintenance
 
 Admins (login emails in `ADMIN_EMAILS`) get **Settings → 🛡 Admin**, a live ops dashboard:
@@ -71,6 +94,11 @@ Admins (login emails in `ADMIN_EMAILS`) get **Settings → 🛡 Admin**, a live 
 - **Maintenance mode** — a toggle that **locks every non-admin out** with a red full-screen notice
   and refuses agent runs (admins keep full access). It flips live (no redeploy) and resets if the
   service restarts — handy for pushing a risky change or pausing usage during a test.
+  - **Surviving a restart:** because the live toggle is in-memory, a redeploy clears it. To keep the
+    site locked **across** a deploy, set **`MAINTENANCE_MODE=on`** (and optional `MAINTENANCE_MESSAGE`)
+    in Render → the daemon boots already locked. To reopen, set it to `off` (or remove it) and
+    redeploy. Note: while `MAINTENANCE_MODE=on` is set, every restart re-locks — so turning it off via
+    the dashboard is only until the next restart; clear the env var to fully reopen.
 
 Set `ADMIN_EMAILS` in Render (Environment, comma-separated; matched lowercased against the user's
 Firebase email). It's **optional** — it defaults to the owner email in code, so the dashboard works

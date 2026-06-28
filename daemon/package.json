@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ide/shared": "*",
+    "firebase-admin": "^14.1.0",
     "http-proxy": "^1.18.1",
     "localtunnel": "^2.0.2",
     "openai": "^4.56.0",

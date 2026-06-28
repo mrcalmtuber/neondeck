@@ -89,6 +89,20 @@ export interface DaemonConfig {
 
   /** Directory holding cross-user metering/account ledgers (hidden from Hub). */
   metaDir: string;
+
+  // ---- durable usage persistence (Firestore) ----
+  /** Firebase service-account credentials (raw JSON, or base64 of it) that let the
+   *  daemon write to Firestore, so per-user monthly usage survives a diskless
+   *  restart. Empty → fall back to the on-disk JSON ledger (fine for local dev,
+   *  wiped on Render's diskless FS). From FIREBASE_SERVICE_ACCOUNT. */
+  firebaseServiceAccount: string;
+
+  // ---- maintenance (temporary test feature) ----
+  /** MAINTENANCE (temporary — remove later): boot the daemon already locked into
+   *  maintenance mode so it survives restarts/redeploys. From MAINTENANCE_MODE
+   *  (on/1/true). The admin dashboard can still toggle it live for this process. */
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
 }
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -201,6 +215,15 @@ export function loadConfig(argv: string[]): DaemonConfig {
       .filter(Boolean),
 
     metaDir: path.join(projectsRoot, ".ide-meta"),
+
+    // Durable usage persistence — Firestore via a service account (so the monthly
+    // token meter survives Render's diskless redeploys). Empty → local JSON ledger.
+    firebaseServiceAccount: process.env.FIREBASE_SERVICE_ACCOUNT ?? "",
+
+    // MAINTENANCE (temporary — remove later)
+    maintenanceMode: /^(1|true|on|yes)$/i.test(process.env.MAINTENANCE_MODE ?? ""),
+    maintenanceMessage:
+      process.env.MAINTENANCE_MESSAGE ?? "NeonDeck is down for maintenance — back shortly.",
   };
 }
 

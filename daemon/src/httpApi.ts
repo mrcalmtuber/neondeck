@@ -162,6 +162,7 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
       // ---- Current tier + usage ----
       if (path === "/api/me" && req.method === "GET") {
         const user = await authenticate(config, bearer(req), { allowLoopbackDev });
+        await store.ensureLoaded(user.userId); // durable usage before reading the meter
         // Stripe is the source of truth — reconcile before reading (this is the
         // call the app makes on return from Checkout, so the upgrade lands here
         // even if the webhook/ledger missed it). Best-effort; never blocks /me.

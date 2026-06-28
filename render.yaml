@@ -28,6 +28,13 @@ services:
         sync: false
       - key: FIREBASE_PROJECT_ID
         sync: false
+      # ---- Durable usage (Firestore). The free tier has NO disk, so the monthly
+      # token meter is otherwise WIPED on every restart/sleep/deploy. Paste a
+      # Firebase service-account key JSON (or its base64) to persist usage in
+      # Firestore. See DEPLOY.md → "Persist usage (Firestore)". Leave UNSET to use
+      # the local JSON ledger (fine for dev; wiped on a diskless host). ----
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
       # ---- Stripe (real billing). Leave UNSET to keep the simulated upgrade
       # fallback; set ALL FOUR to take real payments. See DEPLOY.md → "Stripe". ----
       - key: STRIPE_SECRET_KEY
@@ -48,6 +55,15 @@ services:
       # admin (the ops dashboard: view sessions, cancel agents, maintenance toggle).
       # Optional — defaults to the owner email in code; set to override / add admins. ----
       - key: ADMIN_EMAILS
+        sync: false
+      # ---- MAINTENANCE (temporary — remove later). Set MAINTENANCE_MODE=on to boot
+      # locked into maintenance so a lockout SURVIVES a restart/redeploy (the admin
+      # dashboard toggles it live, but in-memory toggles reset on restart). Clear it
+      # (or set off) + redeploy to bring the site back up. MAINTENANCE_MESSAGE is the
+      # banner text shown to locked-out users. ----
+      - key: MAINTENANCE_MODE
+        sync: false
+      - key: MAINTENANCE_MESSAGE
         sync: false
       # IDE_APP_ORIGIN / IDE_ALLOWED_ORIGINS are NOT needed: the daemon auto-trusts
       # same-origin requests (web + API + WS share one origin), and Stripe's checkout

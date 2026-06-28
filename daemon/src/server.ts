@@ -38,6 +38,7 @@ import { openTunnel, type TunnelHandle } from "./tunnel.js";
 import { authenticate, authConfigured, userRoot, userStorageKey, type AuthMode } from "./auth.js";
 import { pushProject, pullProject, listRemoteProjects } from "./githubSync.js";
 import { UsageStore, type Meter } from "./usage.js";
+import { initFirestore } from "./firebaseAdmin.js";
 import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
 import {
@@ -115,8 +116,26 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
   // separate port) so the whole app fits one PaaS port.
   const proxy = createProxyRouter();
 
-  // Cross-user metering + tier ledger (Stripe webhooks update it).
-  const store = new UsageStore(config.metaDir);
+  // Cross-user metering + tier ledger (Stripe webhooks update it). Backed by
+  // Firestore when a service account is configured (so the monthly token meter
+  // survives Render's diskless redeploys); otherwise a local JSON ledger.
+  const firestore = initFirestore(config.firebaseServiceAccount);
+  const store = new UsageStore(config.metaDir, { firestore });
+
+  // MAINTENANCE (temporary — remove later): boot already locked if MAINTENANCE_MODE
+  // is set in the environment, so a lockout survives a restart/redeploy.
+  if (config.maintenanceMode) {
+    maintenance = { on: true, message: config.maintenanceMessage };
+    console.log("[maintenance] booting in maintenance mode (MAINTENANCE_MODE set)");
+  }
+
+  // Persist any buffered usage on a graceful shutdown (Render sends SIGTERM on
+  // redeploy) so the last few seconds of metering aren't lost.
+  const flushAndExit = () => {
+    void store.flush().finally(() => process.exit(0));
+  };
+  process.once("SIGTERM", flushAndExit);
+  process.once("SIGINT", flushAndExit);
 
   // Optional: serve the built web SPA on this port too, so a single service hosts
   // web + API + WS + previews. Null in local dev (Vite serves the web on :5173).
@@ -559,6 +578,10 @@ async function handleMessage(
       session.projectRoot = userRoot(config, user);
       // v7: a GitHub token (browser-held) enables per-user project sync this session.
       session.githubToken = msg.githubToken ?? null;
+
+      // Hydrate this user's durable usage (Firestore) before reading their meter,
+      // so the monthly limiter reflects prior spend instead of a wiped-to-0 ledger.
+      await store.ensureLoaded(user.userId);
 
       const tier = currentTier(session, config, store);
       session.runtimeMode = await detectMode(session.forced);
