@@ -140,7 +140,9 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
           bearer(req) ?? (typeof body.token === "string" ? body.token : undefined),
           { allowLoopbackDev },
         );
+        await store.ensureLoaded(user.userId); // operate on the durable tier/usage
         const checkoutUrl = await createCheckoutSession(config, store, { userId: user.userId, email: user.email, tier });
+        await store.flush(); // persist a mock-grant immediately (don't lose it to a restart)
         return json(res, 200, { url: checkoutUrl });
       }
 
@@ -154,8 +156,10 @@ export function createApiHandler(config: DaemonConfig, store: UsageStore) {
           bearer(req) ?? (typeof body.token === "string" ? body.token : undefined),
           { allowLoopbackDev },
         );
+        await store.ensureLoaded(user.userId); // read the durable tier before changing it
         const devTier = user.mode === "dev" ? (config.devTier as Tier) : undefined;
         const usage = await changeTier(config, store, { userId: user.userId, tier, devTier });
+        await store.flush(); // persist the downgrade immediately so a reload can't revert it
         return json(res, 200, { usage });
       }
 

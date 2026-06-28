@@ -1074,6 +1074,7 @@ async function handleMessage(
       if (target?.userId) {
         const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
         store.setTier(target.userId, tier);
+        await store.flush(); // persist immediately so a reload can't revert it
         target.send({ type: "usage_update", id: "broadcast", usage: store.snapshot(target.userId, tier) });
         target.send({
           type: "notice",
@@ -1091,6 +1092,7 @@ async function handleMessage(
       if (target?.userId) {
         const tier = currentTier(target, config, store);
         store.setMonthlyTokens(target.userId, msg.tokensUsed);
+        await store.flush(); // persist immediately
         const snap = store.snapshot(target.userId, tier);
         target.send({ type: "usage_update", id: "broadcast", usage: snap });
         // If pushed to/over the limit, the next agent call is paywalled by the meter.
