@@ -20,6 +20,7 @@ import {
   type Tier,
   type MaintenanceState,
   type SearchMatch,
+  type AdminUserInfo,
 } from "@ide/shared";
 
 /**
@@ -426,13 +427,23 @@ export class DaemonClient {
   adminSetMaintenance(on: boolean, message: string): void {
     this.send({ type: "admin_set_maintenance", id: nextId(), on, message });
   }
-  /** Change another user's subscription tier (0=Free,1=Pro,2=Max). */
-  adminSetTier(sessionId: string, tier: number): void {
-    this.send({ type: "admin_set_tier", id: nextId(), sessionId, tier });
+  /** Change ANY user's subscription tier (0=Free,1=Pro,2=Max), by uid. */
+  adminSetTier(userId: string, tier: number): void {
+    this.send({ type: "admin_set_tier", id: nextId(), userId, tier });
   }
-  /** Set another user's monthly token usage to an absolute value (e.g. max out). */
-  adminSetUsage(sessionId: string, tokensUsed: number): void {
-    this.send({ type: "admin_set_usage", id: nextId(), sessionId, tokensUsed });
+  /** Set ANY user's monthly token usage to an absolute value (e.g. max out), by uid. */
+  adminSetUsage(userId: string, tokensUsed: number): void {
+    this.send({ type: "admin_set_usage", id: nextId(), userId, tokensUsed });
+  }
+  /** Set (number) or clear (null) ANY user's custom monthly token limit, by uid. */
+  adminSetLimit(userId: string, limit: number | null): void {
+    this.send({ type: "admin_set_limit", id: nextId(), userId, limit });
+  }
+  /** Look up ANY user by email (online or not) to view/edit their plan + usage. */
+  async adminLookupUser(email: string): Promise<AdminUserInfo | null> {
+    const res = await this.request({ type: "admin_lookup_user", id: nextId(), email });
+    if (res.type !== "admin_user") throw new Error("Unexpected lookup response");
+    return res.user;
   }
 
   // -------- Hub / projects --------

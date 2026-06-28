@@ -240,20 +240,35 @@ export interface AdminSetMaintenanceRequest {
   on: boolean;
   message: string;
 }
-/** Admin: change a connected user's subscription tier (0=Free,1=Pro,2=Max). */
+/** Admin: change ANY user's subscription tier (0=Free,1=Pro,2=Max), by uid — works
+ *  for offline users too (applied to the durable ledger). */
 export interface AdminSetTierRequest {
   type: "admin_set_tier";
   id: string;
-  sessionId: string;
+  userId: string;
   tier: number;
 }
-/** Admin: set a connected user's monthly token usage to an absolute value (e.g.
- *  a text-input number, or the tier limit to "max out"/hit their limit). */
+/** Admin: set ANY user's monthly token usage to an absolute value (e.g. a text-input
+ *  number, or the limit to "max out"/hit their limit). */
 export interface AdminSetUsageRequest {
   type: "admin_set_usage";
   id: string;
-  sessionId: string;
+  userId: string;
   tokensUsed: number;
+}
+/** Admin: set (or clear) a per-user custom monthly token LIMIT override, independent
+ *  of their tier. `limit: null` clears it (back to the tier default). */
+export interface AdminSetLimitRequest {
+  type: "admin_set_limit";
+  id: string;
+  userId: string;
+  limit: number | null;
+}
+/** Admin: look up ANY user by email (online or not) to view/edit their plan + usage. */
+export interface AdminLookupUserRequest {
+  type: "admin_lookup_user";
+  id: string;
+  email: string;
 }
 
 // Feature A — inline AI
@@ -391,7 +406,9 @@ export type ClientMessage =
   | AdminCancelAgentRequest
   | AdminSetMaintenanceRequest
   | AdminSetTierRequest
-  | AdminSetUsageRequest;
+  | AdminSetUsageRequest
+  | AdminSetLimitRequest
+  | AdminLookupUserRequest;
 
 // ---------------------------------------------------------------------------
 // Daemon -> Browser
@@ -410,6 +427,8 @@ export const DEFAULT_MAINTENANCE_MESSAGE =
 /** A live session row for the admin dashboard. */
 export interface AdminSessionInfo {
   sessionId: string;
+  /** The authenticated uid (admin-only) — keys tier/usage/limit edits. */
+  userId: string | null;
   email: string | null;
   authMode: "firebase" | "dev";
   project: string | null;
@@ -423,6 +442,19 @@ export interface AdminSessionInfo {
   tier: number;
   tokensUsed: number;
   tokensLimit: number;
+  /** Custom limit override in effect (null = using the tier default). */
+  limitOverride: number | null;
+}
+
+/** A user record for the admin "manage any user" lookup (online or offline). */
+export interface AdminUserInfo {
+  userId: string;
+  email: string | null;
+  tier: number;
+  tokensUsed: number;
+  tokensLimit: number;
+  limitOverride: number | null;
+  online: boolean;
 }
 
 export interface HelloResponse {
@@ -670,6 +702,12 @@ export interface MaintenanceChangedMessage {
   id: string; // "broadcast"
   maintenance: MaintenanceState;
 }
+/** Reply to admin_lookup_user — the matched user (or null if no such email). */
+export interface AdminUserMessage {
+  type: "admin_user";
+  id: string;
+  user: AdminUserInfo | null;
+}
 /** A lightweight toast pushed to a user (e.g. "an admin stopped your agent"). */
 export interface NoticeMessage {
   type: "notice";
@@ -712,5 +750,6 @@ export type ServerMessage =
   | PaywallMessage
   | ErrorMessage
   | AdminStateMessage
+  | AdminUserMessage
   | MaintenanceChangedMessage
   | NoticeMessage;

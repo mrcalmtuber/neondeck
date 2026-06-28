@@ -36,6 +36,8 @@ interface Account {
   tier: Tier;
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
+  /** Admin-set custom monthly token limit; overrides the tier default when set. */
+  limitOverride?: number | null;
 }
 
 interface Ledger {
@@ -222,6 +224,24 @@ export class UsageStore {
     this.save(userId);
   }
 
+  /** The custom limit override for a user, or null when using the tier default. */
+  limitOverride(userId: string): number | null {
+    return this.data.accounts[userId]?.limitOverride ?? null;
+  }
+
+  /** Admin: set (n) or clear (null) a user's custom monthly token limit. */
+  setLimitOverride(userId: string, limit: number | null): void {
+    const acct = (this.data.accounts[userId] ??= { tier: 0 });
+    acct.limitOverride = limit == null ? null : Math.max(0, Math.floor(limit));
+    this.save(userId);
+  }
+
+  /** Effective monthly limit: the admin override if set, else the tier default. */
+  effectiveLimit(userId: string, tier: Tier): number {
+    const override = this.data.accounts[userId]?.limitOverride;
+    return override == null ? getTier(tier).tokenLimit : override;
+  }
+
   /** Tokens charged to a user today (UTC) — backs the hidden Free daily cap. */
   tokensUsedToday(userId: string, day = currentDay()): number {
     return this.data.usageDaily[userId]?.[day] ?? 0;
@@ -235,7 +255,7 @@ export class UsageStore {
   snapshot(userId: string, tier: Tier): UsageSnapshot {
     const period = currentPeriod();
     const tokensUsed = this.tokensUsed(userId, period);
-    const tokensLimit = getTier(tier).tokenLimit;
+    const tokensLimit = this.effectiveLimit(userId, tier);
     return {
       tier,
       tokensUsed,
@@ -246,6 +266,6 @@ export class UsageStore {
   }
 
   isOverLimit(userId: string, tier: Tier): boolean {
-    return this.tokensUsed(userId) >= getTier(tier).tokenLimit;
+    return this.tokensUsed(userId) >= this.effectiveLimit(userId, tier);
   }
 }

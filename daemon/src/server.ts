@@ -38,7 +38,7 @@ import { openTunnel, type TunnelHandle } from "./tunnel.js";
 import { authenticate, authConfigured, userRoot, userStorageKey, type AuthMode } from "./auth.js";
 import { pushProject, pullProject, listRemoteProjects } from "./githubSync.js";
 import { UsageStore, type Meter } from "./usage.js";
-import { initFirestore } from "./firebaseAdmin.js";
+import { initFirestore, lookupUserByEmail } from "./firebaseAdmin.js";
 import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
 import {
@@ -543,6 +543,7 @@ function buildAdminState(): AdminSessionInfo[] {
     }
     return {
       sessionId: s.id,
+      userId: s.userId,
       email: s.email,
       authMode: s.authMode,
       project: s.activeProject,
@@ -554,8 +555,25 @@ function buildAdminState(): AdminSessionInfo[] {
       tier,
       tokensUsed,
       tokensLimit,
+      limitOverride: usageStore && s.userId ? usageStore.limitOverride(s.userId) : null,
     };
   });
+}
+
+/** Push a fresh usage snapshot (and optional notice) to every connected session of
+ *  a user after an admin edits their tier/usage/limit. No-op if they're offline. */
+function notifyUserUsage(userId: string, text: string | null): void {
+  if (!usageStore || !serverConfig) return;
+  for (const s of activeSessions) {
+    if (s.userId !== userId) continue;
+    const tier = currentTier(s, serverConfig, usageStore);
+    const snap = usageStore.snapshot(userId, tier);
+    s.send({ type: "usage_update", id: "broadcast", usage: snap });
+    if (snap.limitReached) {
+      s.send({ type: "paywall", id: "broadcast", usage: snap, message: "You've reached your usage limit." });
+    }
+    if (text) s.send({ type: "notice", id: "broadcast", level: "info", text });
+  }
 }
 
 /** Push the live ops state to every subscribed admin (no-op if none watching). */
@@ -1070,39 +1088,55 @@ async function handleMessage(
     }
     case "admin_set_tier": {
       if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
-      const target = [...activeSessions].find((s) => s.id === msg.sessionId);
-      if (target?.userId) {
-        const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
-        store.setTier(target.userId, tier);
-        await store.flush(); // persist immediately so a reload can't revert it
-        target.send({ type: "usage_update", id: "broadcast", usage: store.snapshot(target.userId, tier) });
-        target.send({
-          type: "notice",
-          id: "broadcast",
-          level: "info",
-          text: `An admin set your plan to ${getTier(tier).name}.`,
-        });
-      }
+      if (!msg.userId) return;
+      const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
+      await store.ensureLoaded(msg.userId);
+      store.setTier(msg.userId, tier);
+      await store.flush(); // persist immediately so a reload can't revert it
+      notifyUserUsage(msg.userId, `An admin set your plan to ${getTier(tier).name}.`);
       broadcastAdminState();
       return;
     }
     case "admin_set_usage": {
       if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
-      const target = [...activeSessions].find((s) => s.id === msg.sessionId);
-      if (target?.userId) {
-        const tier = currentTier(target, config, store);
-        store.setMonthlyTokens(target.userId, msg.tokensUsed);
-        await store.flush(); // persist immediately
-        const snap = store.snapshot(target.userId, tier);
-        target.send({ type: "usage_update", id: "broadcast", usage: snap });
-        // If pushed to/over the limit, the next agent call is paywalled by the meter.
-        if (snap.limitReached) {
-          target.send({ type: "paywall", id: "broadcast", usage: snap, message: "You've reached your usage limit." });
-        }
-        target.send({ type: "notice", id: "broadcast", level: "info", text: "An admin updated your usage." });
-      }
+      if (!msg.userId) return;
+      await store.ensureLoaded(msg.userId);
+      store.setMonthlyTokens(msg.userId, msg.tokensUsed);
+      await store.flush(); // persist immediately
+      notifyUserUsage(msg.userId, "An admin updated your usage.");
       broadcastAdminState();
       return;
+    }
+    case "admin_set_limit": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      if (!msg.userId) return;
+      await store.ensureLoaded(msg.userId);
+      store.setLimitOverride(msg.userId, msg.limit);
+      await store.flush(); // persist immediately
+      notifyUserUsage(msg.userId, "An admin updated your token limit.");
+      broadcastAdminState();
+      return;
+    }
+    case "admin_lookup_user": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      const found = await lookupUserByEmail(msg.email);
+      if (!found) return send({ type: "admin_user", id: msg.id, user: null });
+      await store.ensureLoaded(found.userId);
+      const tier = store.tierFor(found.userId) as Tier;
+      const snap = store.snapshot(found.userId, tier);
+      return send({
+        type: "admin_user",
+        id: msg.id,
+        user: {
+          userId: found.userId,
+          email: found.email,
+          tier,
+          tokensUsed: snap.tokensUsed,
+          tokensLimit: snap.tokensLimit,
+          limitOverride: store.limitOverride(found.userId),
+          online: [...activeSessions].some((s) => s.userId === found.userId),
+        },
+      });
     }
 
     case "stop_agent": {

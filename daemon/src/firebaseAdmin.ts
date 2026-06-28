@@ -1,5 +1,6 @@
 import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
 
 /**
  * Optional server-side Firestore (via a service account).
@@ -15,6 +16,7 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore";
  * and needs no secret; this is purely for Firestore WRITES.)
  */
 let firestore: Firestore | null = null;
+let adminApp: App | null = null;
 let tried = false;
 
 export function initFirestore(serviceAccountRaw: string | undefined): Firestore | null {
@@ -40,6 +42,7 @@ export function initFirestore(serviceAccountRaw: string | undefined): Firestore 
             privateKey: creds.private_key?.replace(/\\n/g, "\n"),
           }),
         });
+    adminApp = app;
     firestore = getFirestore(app);
     console.log(`[firestore] usage persistence enabled (project: ${creds.project_id ?? "?"})`);
   } catch (err) {
@@ -50,4 +53,21 @@ export function initFirestore(serviceAccountRaw: string | undefined): Firestore 
     firestore = null;
   }
   return firestore;
+}
+
+/**
+ * Look up a user by email via Firebase Admin Auth (needs the service account).
+ * Lets an admin manage ANY user — online or not. Returns null if not found or if
+ * admin isn't configured.
+ */
+export async function lookupUserByEmail(
+  email: string,
+): Promise<{ userId: string; email: string | null } | null> {
+  if (!adminApp) return null;
+  try {
+    const u = await getAuth(adminApp).getUserByEmail(email.trim());
+    return { userId: u.uid, email: u.email ?? null };
+  } catch {
+    return null; // no such user / auth error
+  }
 }
