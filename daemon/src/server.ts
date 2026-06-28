@@ -105,8 +105,12 @@ interface Session {
   /** This admin is watching the live ops dashboard (gets admin_state pushes). */
   adminSubscribed: boolean;
   connectedAtMs: number;
-  /** This connection's sender, stored so we can broadcast to every session. */
+  /** This connection's sender, stored so we can broadcast to every session. While
+   *  detached (socket dropped, agent still running) this points at a buffer that
+   *  collects agent output for replay on reattach. */
   send: (m: ServerMessage) => void;
+  /** Agent output captured while detached, replayed when a socket reattaches. */
+  replayBuffer?: ServerMessage[];
 }
 
 let slotCounter = 0;
@@ -317,21 +321,82 @@ function handleConnection(
   };
   activeSessions.add(session);
 
-  const send = (msg: ServerMessage) => {
+  // Raw sender bound to THIS socket. The session this socket drives is `current`:
+  // normally the fresh session above, but on a reconnect within the grace window it
+  // is swapped to the user's still-alive detached session (see reattach), so an
+  // in-flight agent keeps streaming to the new socket.
+  const rawSend = (msg: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
-  session.send = send;
+  let current = session;
+  current.send = rawSend;
+
+  // Live RAM sampling for the process dashboard (restartable so a reattached
+  // session resumes sampling on the new socket).
+  const startRamTimer = (s: Session) =>
+    setInterval(async () => {
+      if (s.procs.size === 0) return;
+      for (const { id, pid } of s.procs.pids()) {
+        if (pid != null) s.procs.setRam(id, await sampleRam(pid));
+      }
+      s.send({ type: "processes", id: "broadcast", processes: s.procs.list() });
+    }, 2000);
+  current.ramTimer = startRamTimer(current);
+
+  // Full teardown of a session's sandbox. Used by the close handler (immediate) and
+  // by the grace timer when a dropped user never reconnects.
+  const cleanup = async (sess: Session) => {
+    sess.agent.stopRequested = true;
+    sess.agent.abort?.abort();
+    sess.agent.pendingApproval?.(false);
+    await flushSync(sess, config).catch(() => {}); // best-effort final GitHub push
+    for (const kill of sess.running.values()) kill();
+    sess.procs.killAll();
+    stopContainer(sess.containerName);
+    if (sess.previewSlot) proxy.unregister(sess.previewSlot);
+    releasePreviewPort(sess.previewPort);
+    sess.watcher?.close();
+    if (sess.ramTimer) clearInterval(sess.ramTimer);
+    sess.tunnel?.close();
+    try {
+      sess.db?.close();
+    } catch {
+      /* already closed */
+    }
+    activeSessions.delete(sess);
+    if (sess.userId && detached.get(sess.userId)?.session === sess) detached.delete(sess.userId);
+    broadcastAdminState();
+    console.log("[daemon] session cleaned up");
+  };
+
+  // Reattach this socket to a still-alive session (called from hello) — either one
+  // detached in the grace window, or one still active because the daemon hasn't
+  // noticed the old socket died yet (abrupt drop). The old socket's late close is
+  // a no-op thanks to the `sess.send !== rawSend` guard in the close handler.
+  const reattach = (older: Session) => {
+    activeSessions.delete(current); // discard the fresh placeholder this socket came in on
+    if (current.ramTimer) clearInterval(current.ramTimer);
+    if (older.ramTimer) clearInterval(older.ramTimer); // takeover: stop its prior socket's timer
+    current = older; // drive the live session, routing its output to THIS socket
+    older.send = rawSend;
+    older.ramTimer = startRamTimer(older);
+    activeSessions.add(older);
+    const buf = older.replayBuffer ?? []; // replay the gap so the chat catches up
+    older.replayBuffer = undefined;
+    for (const m of buf) rawSend(m);
+    console.log(`[daemon] reattached socket to live session for ${older.userId}`);
+  };
 
   // WS heartbeat: ping each client; a socket that misses a pong is half-open
   // (common on phones / flaky Wi-Fi / proxies) and gets terminated so its session
-  // is cleaned up instead of lingering. Browsers auto-reply to protocol pings.
+  // is cleaned up (or detached) instead of lingering. Browsers auto-reply to pings.
   let isAlive = true;
   ws.on("pong", () => {
     isAlive = true;
   });
   const heartbeat = setInterval(() => {
     if (!isAlive) {
-      ws.terminate(); // triggers ws.on("close") → full cleanup below
+      ws.terminate(); // triggers ws.on("close") below
       return;
     }
     isAlive = false;
@@ -342,49 +407,54 @@ function handleConnection(
     }
   }, 30_000);
 
-  // Live RAM sampling for the process dashboard.
-  session.ramTimer = setInterval(async () => {
-    if (session.procs.size === 0) return;
-    for (const { id, pid } of session.procs.pids()) {
-      if (pid != null) session.procs.setRam(id, await sampleRam(pid));
-    }
-    send({ type: "processes", id: "broadcast", processes: session.procs.list() });
-  }, 2000);
-
   ws.on("message", (raw) => {
     let msg: ClientMessage;
     try {
       msg = JSON.parse(raw.toString());
     } catch {
-      return send({ type: "error", id: "?", message: "Malformed JSON" });
+      return rawSend({ type: "error", id: "?", message: "Malformed JSON" });
     }
-    handleMessage(msg, session, config, proxy, store, send).catch((err) =>
-      send({ type: "error", id: msg.id, message: String(err?.message ?? err) }),
+    handleMessage(msg, current, config, proxy, store, rawSend, { reattach }).catch((err) =>
+      rawSend({ type: "error", id: msg.id, message: String(err?.message ?? err) }),
     );
   });
 
   ws.on("close", async () => {
-    session.agent.stopRequested = true;
-    session.agent.abort?.abort();
-    session.agent.pendingApproval?.(false);
-    // Best-effort final push of the open project before tearing down.
-    await flushSync(session, config).catch(() => {});
-    for (const kill of session.running.values()) kill();
-    session.procs.killAll();
-    stopContainer(session.containerName);
-    if (session.previewSlot) proxy.unregister(session.previewSlot);
-    releasePreviewPort(session.previewPort); // return this session's preview port to the pool
-    session.watcher?.close();
-    if (session.ramTimer) clearInterval(session.ramTimer);
     clearInterval(heartbeat);
-    session.tunnel?.close();
-    try {
-      session.db?.close();
-    } catch {
-      /* already closed */
+    const sess = current;
+    // If a newer connection already took over this session (its sender no longer
+    // points at this socket), this is a stale close — do nothing, the new socket
+    // owns the session now.
+    if (sess.send !== rawSend) return;
+    // Survive a brief drop: if an agent is mid-run, hold the session (and its
+    // sandbox) for a grace window so a reconnect can reattach and keep streaming.
+    // Buffer the agent's output meanwhile; it's replayed on reattach.
+    if (sess.userId && sess.agent.abort != null) {
+      if (sess.ramTimer) {
+        clearInterval(sess.ramTimer);
+        sess.ramTimer = null;
+      }
+      const buffer: ServerMessage[] = [];
+      sess.replayBuffer = buffer;
+      sess.send = (m) => {
+        if (buffer.length < 500) buffer.push(m);
+      };
+      const prev = detached.get(sess.userId);
+      if (prev && prev.session !== sess) {
+        clearTimeout(prev.timer);
+        void cleanup(prev.session); // evict an older detached session for this user
+      }
+      const timer = setTimeout(() => {
+        detached.delete(sess.userId!);
+        void cleanup(sess);
+      }, GRACE_MS);
+      timer.unref?.();
+      detached.set(sess.userId, { session: sess, timer });
+      broadcastAdminState();
+      console.log(`[daemon] client dropped with agent running — holding ${GRACE_MS / 1000}s for reattach`);
+      return;
     }
-    activeSessions.delete(session);
-    broadcastAdminState(); // a session left — refresh the ops dashboard
+    await cleanup(sess);
     console.log("[daemon] client disconnected, sandbox cleaned up");
   });
 }
@@ -436,6 +506,15 @@ const SYNC_DEBOUNCE_MS = 5000;
 
 /** Live sessions, so a graceful shutdown can flush every open project to GitHub. */
 const activeSessions = new Set<Session>();
+
+/**
+ * "Survive a brief drop": when a socket closes WHILE an agent is mid-run, the
+ * session (and its sandbox) is held here keyed by userId for a grace window, so a
+ * reconnect can reattach and keep streaming. If the user never returns, the grace
+ * timer tears it down. Agents do NOT run forever after everyone leaves.
+ */
+const GRACE_MS = 120_000; // 2 min: covers refreshes / network blips, not abandonment
+const detached = new Map<string, { session: Session; timer: ReturnType<typeof setTimeout> }>();
 
 // ---- Admin ops + maintenance ----
 // MAINTENANCE (temporary — remove later): in-memory flag flipped by an admin.
@@ -560,6 +639,7 @@ async function handleMessage(
   proxy: ProxyRouter,
   store: UsageStore,
   send: (m: ServerMessage) => void,
+  opts?: { reattach: (older: Session) => void },
 ): Promise<void> {
   switch (msg.type) {
     case "hello": {
@@ -571,6 +651,53 @@ async function handleMessage(
       const user = await authenticate(config, msg.token, {
         allowLoopbackDev: session.allowLoopbackDev,
       });
+
+      // Reattach to this user's still-running session if one is parked in the grace
+      // window — i.e. the previous socket closed (tab close / refresh / navigate /
+      // dropped connection all send a TCP close) while an agent was mid-run. The
+      // in-flight agent then keeps streaming to this new socket. We deliberately do
+      // NOT adopt a still-ACTIVE session here: that would let a second browser tab
+      // hijack the first tab's running agent.
+      const live = detached.get(user.userId);
+      const older: Session | undefined = live?.session;
+      if (live) {
+        clearTimeout(live.timer);
+        detached.delete(user.userId);
+      }
+      if (older && opts?.reattach) {
+        older.githubToken = msg.githubToken ?? older.githubToken;
+        older.isAdmin = !!user.email && config.adminEmails.includes(user.email.toLowerCase());
+        opts.reattach(older); // swap this socket to drive `older`; flush its replay buffer
+        await store.ensureLoaded(older.userId!);
+        const tierR = currentTier(older, config, store);
+        older.runtimeMode = await detectMode(older.forced);
+        send({
+          type: "hello_ok",
+          id: msg.id,
+          protocolVersion: PROTOCOL_VERSION,
+          agentReady: Boolean(config.deepseekApiKey),
+          model: "Neon Agent",
+          runtimeMode: older.runtimeMode,
+          dockerAvailable: await dockerAvailable(),
+          proxyPort: config.proxyPort,
+          projectsRootName: path.basename(config.projectsRoot),
+          userId: older.userId!,
+          authMode: older.authMode,
+          usage: store.snapshot(older.userId!, tierR),
+          billingEnabled: billingEnabled(config),
+          isAdmin: older.isAdmin,
+          maintenance,
+        });
+        send({
+          type: "notice",
+          id: "broadcast",
+          level: "info",
+          text: "Reconnected — your agent kept running.",
+        });
+        broadcastAdminState();
+        return;
+      }
+
       session.userId = user.userId;
       session.authMode = user.mode;
       session.email = user.email ?? null;
@@ -853,6 +980,10 @@ async function handleMessage(
       // User-selected effort, clamped to the tier's ceiling (High is Max-only;
       // defaults to the tier default when the client sends none).
       const effort = clampEffortForTier(promptTier, msg.effort ?? effortForTier(promptTier));
+      // Route ALL agent output through session.send (not the captured socket sender)
+      // so a mid-run disconnect buffers it and a reattach redirects it to the new
+      // socket — the run survives a brief drop instead of streaming into the void.
+      const emit = (m: ServerMessage) => session.send(m);
       await runAgent(msg.id, msg.prompt, {
         config,
         workspaceDir: wsDir,
@@ -860,9 +991,9 @@ async function handleMessage(
         effort,
         canRunCommands,
         state: session.agent,
-        send,
-        meter: makeMeter(session, config, store, send, effort),
-        runShell: (command, agentId) => runShell(command, agentId, wsDir, session, config, send),
+        send: emit,
+        meter: makeMeter(session, config, store, emit, effort),
+        runShell: (command, agentId) => runShell(command, agentId, wsDir, session, config, emit),
         // Copilot approval bridge: park a resolver, ask the UI, resume on reply.
         requestApproval: (toolName, summary, detail) =>
           new Promise<boolean>((resolve) => {
@@ -870,7 +1001,7 @@ async function handleMessage(
               session.agent.pendingApproval = null;
               resolve(approve);
             };
-            send({ type: "agent_approval", id: msg.id, toolName, summary, detail });
+            emit({ type: "agent_approval", id: msg.id, toolName, summary, detail });
           }),
       });
       broadcastAdminState(); // run finished — clear "running" on the ops dashboard
