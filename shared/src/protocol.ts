@@ -751,6 +751,14 @@ export interface NoticeMessage {
   level: "info" | "warn";
   text: string;
 }
+/** A celebratory "gift" pushed to a user when an admin gratuity-upgrades their plan. */
+export interface AccountGiftMessage {
+  type: "account_gift";
+  id: string;
+  tier: number;
+  title: string;
+  message: string;
+}
 
 export type ServerMessage =
   | HelloResponse
@@ -790,4 +798,5 @@ export type ServerMessage =
   | AdminUsersMessage
   | MaintenanceChangedMessage
   | SuspensionChangedMessage
+  | AccountGiftMessage
   | NoticeMessage;

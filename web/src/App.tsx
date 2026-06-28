@@ -10,6 +10,7 @@ import { SubscriptionModal } from "./components/SubscriptionModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { MaintenanceOverlay } from "./components/MaintenanceOverlay";
 import { SuspendedOverlay } from "./components/SuspendedOverlay";
+import { GiftModal } from "./components/GiftModal";
 import { daemon } from "./lib/daemonClient";
 import { attachToRun } from "./lib/agent";
 import { saveChat } from "./lib/chatHistory";
@@ -192,6 +193,8 @@ export function App() {
         useStore.getState().setMaintenance(m.maintenance);
       } else if (m.type === "suspension_changed") {
         useStore.getState().setSuspension(m.suspended, m.message);
+      } else if (m.type === "account_gift") {
+        useStore.getState().setGift({ title: m.title, message: m.message, tier: m.tier });
       } else if (m.type === "notice") {
         useStore.getState().setNotice({ level: m.level, text: m.text });
       }
@@ -282,6 +285,7 @@ export function App() {
       {/* MAINTENANCE (temporary — remove later) */}
       <MaintenanceOverlay />
       <SuspendedOverlay />
+      <GiftModal />
       {notice && (
         <div
           className={`notice-toast ${notice.level}`}

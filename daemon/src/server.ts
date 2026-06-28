@@ -1106,9 +1106,25 @@ async function handleMessage(
       if (!msg.userId) return;
       const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
       await store.ensureLoaded(msg.userId);
+      const prevTier = store.tierFor(msg.userId);
       store.setTier(msg.userId, tier);
       await store.flush(); // persist immediately so a reload can't revert it
-      notifyUserUsage(msg.userId, `An admin set your plan to ${getTier(tier).name}.`);
+      const upgraded = tier > prevTier;
+      // On an upgrade, send a celebratory gratuity gift instead of a plain notice.
+      notifyUserUsage(msg.userId, upgraded ? null : `An admin set your plan to ${getTier(tier).name}.`);
+      if (upgraded) {
+        const planName = getTier(tier).name;
+        for (const s of activeSessions) {
+          if (s.userId !== msg.userId) continue;
+          s.send({
+            type: "account_gift",
+            id: "broadcast",
+            tier,
+            title: "A gift from NeonDeck",
+            message: `As a gratuity, we’ve upgraded you to the ${planName} plan for one month — no charge. Thank you for being part of NeonDeck.`,
+          });
+        }
+      }
       broadcastAdminState();
       return;
     }

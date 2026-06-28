@@ -133,6 +133,9 @@ interface AppState {
   /** Transient toast (e.g. "an admin stopped your agent"). */
   notice: { level: "info" | "warn"; text: string } | null;
   setNotice: (n: { level: "info" | "warn"; text: string } | null) => void;
+  /** Celebratory gift modal (admin gratuity upgrade). */
+  gift: { title: string; message: string; tier: number } | null;
+  setGift: (g: { title: string; message: string; tier: number } | null) => void;
 
   /** Current tier, derived from the latest usage snapshot. */
   tier: () => Tier;
@@ -289,6 +292,8 @@ export const useStore = create<AppState>((set, get) => ({
   setAdminSessions: (adminSessions) => set({ adminSessions }),
   notice: null,
   setNotice: (notice) => set({ notice }),
+  gift: null,
+  setGift: (gift) => set({ gift }),
 
   tier: () => (get().usage?.tier ?? 0) as Tier,
 

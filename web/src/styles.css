@@ -3581,6 +3581,59 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
   padding: 2px 8px;
   border-radius: 999px;
 }
+
+/* ===== Gift modal (admin gratuity upgrade) ===== */
+.gift-backdrop { backdrop-filter: blur(6px); }
+.gift-modal {
+  max-width: 440px;
+  text-align: center;
+  padding: 28px 26px 24px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  background:
+    linear-gradient(var(--bg-1, #0a0f1c), var(--bg-1, #0a0f1c)) padding-box,
+    linear-gradient(135deg, var(--accent), var(--accent2), var(--accent3)) border-box;
+  box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.gift-sparkles {
+  color: var(--accent);
+  letter-spacing: 10px;
+  font-size: 14px;
+  opacity: 0.9;
+  animation: gift-twinkle 1.8s ease-in-out infinite;
+}
+@keyframes gift-twinkle {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.gift-icon {
+  font-size: 56px;
+  margin: 6px 0 4px;
+  animation: gift-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes gift-pop {
+  from { transform: scale(0.4) rotate(-12deg); opacity: 0; }
+  to { transform: scale(1) rotate(0); opacity: 1; }
+}
+.gift-title { margin: 4px 0 10px; font-size: 24px; }
+.gift-plan {
+  display: inline-block;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent2), var(--accent3));
+  margin-bottom: 14px;
+}
+.gift-message {
+  color: var(--text);
+  opacity: 0.92;
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
 .btn-ghost.xs, .btn-danger.xs {
   padding: 3px 9px;
   font-size: 12px;
