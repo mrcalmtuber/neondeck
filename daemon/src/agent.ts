@@ -146,7 +146,14 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
     return;
   }
 
-  const client = new OpenAI({ apiKey: config.deepseekApiKey, baseURL: config.deepseekBaseUrl });
+  // Fail a hung request fast instead of the SDK's 10-minute default (the cause of
+  // the agent sitting on "contacting model…" while still billing the provider).
+  const client = new OpenAI({
+    apiKey: config.deepseekApiKey,
+    baseURL: config.deepseekBaseUrl,
+    timeout: 60_000, // per-request ceiling (connection + initial response)
+    maxRetries: 2,
+  });
 
   state.stopRequested = false;
   state.abort = new AbortController();
@@ -194,6 +201,24 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
   const budgetK = Math.round(MAX_RESPONSE_TOKENS[deps.effort] / 1024);
   const effortTag = `${effortLabel} effort (${budgetK}K budget)`;
 
+  // Idle-stream watchdog: if the model produces no chunk for this long mid-stream,
+  // treat it as hung and abort the run so it stops consuming tokens (the SDK's
+  // request timeout above only covers the INITIAL response, not a stalled stream).
+  const IDLE_MS = 45_000;
+  let timedOut = false;
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  const clearIdle = () => {
+    if (idle) clearTimeout(idle);
+    idle = null;
+  };
+  const armIdle = () => {
+    clearIdle();
+    idle = setTimeout(() => {
+      timedOut = true;
+      state.abort?.abort();
+    }, IDLE_MS);
+  };
+
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
       if (state.stopRequested) break;
@@ -222,7 +247,9 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
       let stepTokens = 0;
       const toolCalls: Record<number, { id: string; name: string; args: string }> = {};
 
+      armIdle(); // stream established — start watching for a stall
       for await (const chunk of stream) {
+        armIdle(); // got data — reset the idle clock
         if (state.stopRequested) break;
         if (chunk.usage) stepTokens = chunk.usage.total_tokens;
         const delta = chunk.choices[0]?.delta;
@@ -237,6 +264,7 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
           if (tc.function?.arguments) slot.args += tc.function.arguments;
         }
       }
+      clearIdle(); // stream finished cleanly — stop the watchdog
 
       // Safety net: if the provider didn't report usage for this request, estimate
       // it (full prompt + output at ~4 chars/token) so consumption is never charged
@@ -295,13 +323,24 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
       send({ type: "agent_done", id: promptId, reason: "stopped" });
     }
   } catch (err) {
-    if (state.stopRequested) {
+    if (timedOut) {
+      // The watchdog aborted a stalled request — end the run so it can't keep
+      // burning tokens, and tell the user plainly (don't loop / retry forever).
+      send({
+        type: "error",
+        id: promptId,
+        message:
+          "The model stopped responding (timed out), so the run was ended to avoid using more tokens. Please try again.",
+      });
+      send({ type: "agent_done", id: promptId, reason: "stopped" });
+    } else if (state.stopRequested) {
       send({ type: "agent_done", id: promptId, reason: "stopped" });
     } else {
       send({ type: "error", id: promptId, message: (err as Error).message });
       send({ type: "agent_done", id: promptId, reason: "completed" });
     }
   } finally {
+    clearIdle();
     // Persist conversation minus the static anchor (idx 0) and the per-turn mode
     // note (idx 1) so neither accumulates across turns.
     state.history = messages.slice(2);
