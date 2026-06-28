@@ -10,6 +10,7 @@ import { SubscriptionModal } from "./components/SubscriptionModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { MaintenanceOverlay } from "./components/MaintenanceOverlay";
 import { daemon } from "./lib/daemonClient";
+import { attachToRun } from "./lib/agent";
 import { saveChat } from "./lib/chatHistory";
 import { getStoredGithubToken } from "./lib/githubAuth";
 import { currentSession, onAuthChange } from "./lib/firebaseClient";
@@ -111,12 +112,29 @@ export function App() {
         // before a reconnect, re-open it on the new session so file/agent ops
         // don't hit "Open a project from the Hub first." On a fresh load this is
         // null (no project yet), so we land on the dashboard as before.
-        if (s.activeProject) {
+        if (info.activeRun && !s.activeProject) {
+          // Full reload while an agent was running: the daemon held the run alive
+          // and reattached this socket. Restore the live UI (project + chat + stream)
+          // since our in-memory state was wiped by the reload.
+          const { project, promptId } = info.activeRun;
+          s.setActiveProject(project);
+          s.loadChatForProject(project); // restore chat-so-far from localStorage
+          s.setView("ide");
+          s.setAgentRunning(true, "Reconnected — resuming your run…");
+          attachToRun(promptId); // re-subscribe the live stream to this run
+          daemon
+            .openProject(project)
+            .then(({ root }) => useStore.getState().setTree(root))
+            .catch((e) => console.warn("[daemon] re-open after reattach failed:", e));
+        } else if (s.activeProject) {
           s.setPreview(null, null); // fresh session — any prior preview server is gone
           daemon
             .openProject(s.activeProject)
             .then(({ root }) => useStore.getState().setTree(root))
             .catch((e) => console.warn("[daemon] re-open project failed:", e));
+          // In-tab reconnect where a run is still live: ensure the stream is attached
+          // (idempotent — a no-op if the in-memory listener already survived the drop).
+          if (info.activeRun) attachToRun(info.activeRun.promptId);
         } else {
           s.setView("dashboard");
         }

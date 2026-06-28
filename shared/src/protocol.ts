@@ -240,6 +240,21 @@ export interface AdminSetMaintenanceRequest {
   on: boolean;
   message: string;
 }
+/** Admin: change a connected user's subscription tier (0=Free,1=Pro,2=Max). */
+export interface AdminSetTierRequest {
+  type: "admin_set_tier";
+  id: string;
+  sessionId: string;
+  tier: number;
+}
+/** Admin: set a connected user's monthly token usage to an absolute value (e.g.
+ *  a text-input number, or the tier limit to "max out"/hit their limit). */
+export interface AdminSetUsageRequest {
+  type: "admin_set_usage";
+  id: string;
+  sessionId: string;
+  tokensUsed: number;
+}
 
 // Feature A — inline AI
 export interface AiExplainRequest {
@@ -374,7 +389,9 @@ export type ClientMessage =
   | StopTunnelRequest
   | AdminSubscribeRequest
   | AdminCancelAgentRequest
-  | AdminSetMaintenanceRequest;
+  | AdminSetMaintenanceRequest
+  | AdminSetTierRequest
+  | AdminSetUsageRequest;
 
 // ---------------------------------------------------------------------------
 // Daemon -> Browser
@@ -385,6 +402,10 @@ export interface MaintenanceState {
   on: boolean;
   message: string;
 }
+
+/** Default copy shown to locked-out users when no custom message is set. */
+export const DEFAULT_MAINTENANCE_MESSAGE =
+  "System Under Maintenance. We are performing scheduled updates to improve our service. All systems are temporarily unavailable. We expect to be back shortly. Thank you for your patience!";
 
 /** A live session row for the admin dashboard. */
 export interface AdminSessionInfo {
@@ -397,6 +418,11 @@ export interface AdminSessionInfo {
   procCount: number;
   previewActive: boolean;
   connectedAtMs: number;
+  /** Subscription tier (0=Free,1=Pro,2=Max) + this month's token usage, so the
+   *  admin can view plans and remotely adjust tier / usage. */
+  tier: number;
+  tokensUsed: number;
+  tokensLimit: number;
 }
 
 export interface HelloResponse {
@@ -419,6 +445,9 @@ export interface HelloResponse {
   isAdmin: boolean;
   /** Current maintenance state (admins are exempt; non-admins get a full lockout). */
   maintenance: MaintenanceState;
+  /** Set when this connection reattached to an agent run that survived a brief drop,
+   *  so the client can restore the live run's UI (project + chat + stream). */
+  activeRun?: { promptId: string; project: string } | null;
 }
 
 export interface ProjectsResponse {

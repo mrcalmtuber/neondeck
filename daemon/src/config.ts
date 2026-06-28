@@ -3,7 +3,7 @@ import os from "node:os";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage } from "node:http";
-import { PROXY_PORT, DAEMON_PORT, type AgentEffort } from "@ide/shared";
+import { PROXY_PORT, DAEMON_PORT, DEFAULT_MAINTENANCE_MESSAGE, type AgentEffort } from "@ide/shared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Built web SPA, relative to the daemon source/dist (repo/web/dist). Served when
@@ -222,8 +222,7 @@ export function loadConfig(argv: string[]): DaemonConfig {
 
     // MAINTENANCE (temporary — remove later)
     maintenanceMode: /^(1|true|on|yes)$/i.test(process.env.MAINTENANCE_MODE ?? ""),
-    maintenanceMessage:
-      process.env.MAINTENANCE_MESSAGE ?? "NeonDeck is down for maintenance — back shortly.",
+    maintenanceMessage: process.env.MAINTENANCE_MESSAGE ?? DEFAULT_MAINTENANCE_MESSAGE,
   };
 }
 

@@ -83,10 +83,13 @@ export interface AgentState {
   /** Current loop step (1-based), surfaced to the admin dashboard. A run is
    *  "active" when `abort != null`. */
   step: number;
+  /** The promptId of the in-flight run (null when idle). Lets a reconnecting client
+   *  reattach its live stream to a run that survived a brief drop. */
+  promptId: string | null;
 }
 
 export function newAgentState(): AgentState {
-  return { history: [], stopRequested: false, abort: null, pendingApproval: null, step: 0 };
+  return { history: [], stopRequested: false, abort: null, pendingApproval: null, step: 0, promptId: null };
 }
 
 export interface AgentDeps {
@@ -157,6 +160,7 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
 
   state.stopRequested = false;
   state.abort = new AbortController();
+  state.promptId = promptId; // so a reconnect can reattach this run's live stream
 
   // Mode + effort directives live AFTER the cached anchor so switching either one
   // never invalidates the index-0 prefix that DeepSeek serves from its context
@@ -346,6 +350,7 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
     state.history = messages.slice(2);
     state.abort = null;
     state.pendingApproval = null;
+    state.promptId = null;
   }
 }
 

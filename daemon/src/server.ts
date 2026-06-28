@@ -48,6 +48,7 @@ import {
   effortForTier,
   clampEffortForTier,
   tokenMultiplierForEffort,
+  DEFAULT_MAINTENANCE_MESSAGE,
   type Tier,
   type AgentEffort,
   type UsageSnapshot,
@@ -125,6 +126,8 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
   // survives Render's diskless redeploys); otherwise a local JSON ledger.
   const firestore = initFirestore(config.firebaseServiceAccount);
   const store = new UsageStore(config.metaDir, { firestore });
+  usageStore = store; // module refs for the admin dashboard (tier/usage view + edits)
+  serverConfig = config;
 
   // MAINTENANCE (temporary — remove later): boot already locked if MAINTENANCE_MODE
   // is set in the environment, so a lockout survives a restart/redeploy.
@@ -516,6 +519,11 @@ const activeSessions = new Set<Session>();
 const GRACE_MS = 120_000; // 2 min: covers refreshes / network blips, not abandonment
 const detached = new Map<string, { session: Session; timer: ReturnType<typeof setTimeout> }>();
 
+// Module refs (set in startServer) so buildAdminState can show each session's tier
+// + usage and admin actions can adjust them.
+let usageStore: UsageStore | null = null;
+let serverConfig: DaemonConfig | null = null;
+
 // ---- Admin ops + maintenance ----
 // MAINTENANCE (temporary — remove later): in-memory flag flipped by an admin.
 // Resets on restart (fine for a diskless free instance). Non-admins are locked out.
@@ -523,17 +531,31 @@ let maintenance: MaintenanceState = { on: false, message: "" };
 
 /** Snapshot every live session for the admin dashboard. */
 function buildAdminState(): AdminSessionInfo[] {
-  return [...activeSessions].map((s) => ({
-    sessionId: s.id,
-    email: s.email,
-    authMode: s.authMode,
-    project: s.activeProject,
-    agentRunning: s.agent.abort != null,
-    agentStep: s.agent.abort != null ? s.agent.step : null,
-    procCount: s.procs.size,
-    previewActive: s.previewSlot != null,
-    connectedAtMs: s.connectedAtMs,
-  }));
+  return [...activeSessions].map((s) => {
+    let tier = 0;
+    let tokensUsed = 0;
+    let tokensLimit = 0;
+    if (usageStore && serverConfig && s.userId) {
+      tier = currentTier(s, serverConfig, usageStore);
+      const snap = usageStore.snapshot(s.userId, tier as Tier);
+      tokensUsed = snap.tokensUsed;
+      tokensLimit = snap.tokensLimit;
+    }
+    return {
+      sessionId: s.id,
+      email: s.email,
+      authMode: s.authMode,
+      project: s.activeProject,
+      agentRunning: s.agent.abort != null,
+      agentStep: s.agent.abort != null ? s.agent.step : null,
+      procCount: s.procs.size,
+      previewActive: s.previewSlot != null,
+      connectedAtMs: s.connectedAtMs,
+      tier,
+      tokensUsed,
+      tokensLimit,
+    };
+  });
 }
 
 /** Push the live ops state to every subscribed admin (no-op if none watching). */
@@ -687,6 +709,12 @@ async function handleMessage(
           billingEnabled: billingEnabled(config),
           isAdmin: older.isAdmin,
           maintenance,
+          // If a run is still in flight, tell the client so it can restore the live
+          // UI after a full reload (where its in-memory state was wiped).
+          activeRun:
+            older.agent.abort != null && older.agent.promptId && older.activeProject
+              ? { promptId: older.agent.promptId, project: older.activeProject }
+              : null,
         });
         send({
           type: "notice",
@@ -968,7 +996,7 @@ async function handleMessage(
           type: "notice",
           id: msg.id,
           level: "warn",
-          text: maintenance.message || "NeonDeck is under maintenance — please try again soon.",
+          text: maintenance.message || DEFAULT_MAINTENANCE_MESSAGE,
         });
         return send({ type: "agent_done", id: msg.id, reason: "stopped" });
       }
@@ -1035,8 +1063,42 @@ async function handleMessage(
     case "admin_set_maintenance": {
       if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
       // MAINTENANCE (temporary — remove later)
-      maintenance = { on: msg.on, message: msg.message };
+      maintenance = { on: msg.on, message: msg.message || DEFAULT_MAINTENANCE_MESSAGE };
       for (const s of activeSessions) s.send({ type: "maintenance_changed", id: "broadcast", maintenance });
+      broadcastAdminState();
+      return;
+    }
+    case "admin_set_tier": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      const target = [...activeSessions].find((s) => s.id === msg.sessionId);
+      if (target?.userId) {
+        const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
+        store.setTier(target.userId, tier);
+        target.send({ type: "usage_update", id: "broadcast", usage: store.snapshot(target.userId, tier) });
+        target.send({
+          type: "notice",
+          id: "broadcast",
+          level: "info",
+          text: `An admin set your plan to ${getTier(tier).name}.`,
+        });
+      }
+      broadcastAdminState();
+      return;
+    }
+    case "admin_set_usage": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      const target = [...activeSessions].find((s) => s.id === msg.sessionId);
+      if (target?.userId) {
+        const tier = currentTier(target, config, store);
+        store.setMonthlyTokens(target.userId, msg.tokensUsed);
+        const snap = store.snapshot(target.userId, tier);
+        target.send({ type: "usage_update", id: "broadcast", usage: snap });
+        // If pushed to/over the limit, the next agent call is paywalled by the meter.
+        if (snap.limitReached) {
+          target.send({ type: "paywall", id: "broadcast", usage: snap, message: "You've reached your usage limit." });
+        }
+        target.send({ type: "notice", id: "broadcast", level: "info", text: "An admin updated your usage." });
+      }
       broadcastAdminState();
       return;
     }

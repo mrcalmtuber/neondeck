@@ -214,6 +214,14 @@ export class UsageStore {
     return forUser[period];
   }
 
+  /** Admin override: set a user's CURRENT-month usage to an absolute value (e.g.
+   *  from a text input, or to the tier limit to "max out"/hit their limit). */
+  setMonthlyTokens(userId: string, n: number, period = currentPeriod()): void {
+    const forUser = (this.data.usage[userId] ??= {});
+    forUser[period] = Math.max(0, Math.floor(n));
+    this.save(userId);
+  }
+
   /** Tokens charged to a user today (UTC) — backs the hidden Free daily cap. */
   tokensUsedToday(userId: string, day = currentDay()): number {
     return this.data.usageDaily[userId]?.[day] ?? 0;

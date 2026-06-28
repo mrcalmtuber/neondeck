@@ -14,13 +14,15 @@ import { clampEffortForTier, effortForTier, type Tier } from "@ide/shared";
 let activeId: string | null = null;
 let unsubscribe: (() => void) | null = null;
 
-export function sendPrompt(prompt: string): void {
-  const store = useStore.getState();
-  if (store.agentRunning) return;
-
-  store.addMessage({ role: "user", content: prompt });
-  store.setAgentRunning(true, "Thinking…");
-
+/**
+ * Subscribe to a run's streamed events and render them into the chat. Used both by
+ * sendPrompt (new run) and by App on reconnect to REATTACH to a run that survived a
+ * brief drop (e.g. after a full reload). Idempotent: re-attaching to the same run is
+ * a no-op, so it's safe to call from the connect effect.
+ */
+export function attachToRun(promptId: string): void {
+  if (activeId === promptId && unsubscribe) return; // already streaming this run
+  activeId = promptId;
   // A fresh assistant bubble that streamed text appends into.
   let assistantOpen = false;
   const ensureAssistant = () => {
@@ -30,32 +32,11 @@ export function sendPrompt(prompt: string): void {
     }
   };
 
-  void (async () => {
-    try {
-      // The daemon tracks the open workspace per-connection. If we reconnected
-      // since opening the project, this socket has no workspace — re-open it so
-      // the agent doesn't reject with "Open a project from the Hub first."
-      const s0 = useStore.getState();
-      if (s0.transport === "daemon" && s0.activeProject && daemon.openedProject !== s0.activeProject) {
-        const { root } = await daemon.openProject(s0.activeProject);
-        useStore.getState().setTree(root);
-      }
-      const st = useStore.getState();
-      const tier = (st.usage?.tier ?? 0) as Tier;
-      const effort = clampEffortForTier(tier, st.agentEffort ?? effortForTier(tier));
-      activeId = daemon.agentPrompt(prompt, st.agentMode, effort);
-    } catch (e) {
-      const s = useStore.getState();
-      s.addMessage({ role: "assistant", content: `⚠️ ${e instanceof Error ? e.message : String(e)}` });
-      s.setAgentRunning(false, "");
-      return;
-    }
-
-    unsubscribe?.();
-    unsubscribe = daemon.onMessage((m) => {
-      if (m.id !== activeId) return;
-      const s = useStore.getState();
-      switch (m.type) {
+  unsubscribe?.();
+  unsubscribe = daemon.onMessage((m) => {
+    if (m.id !== activeId) return;
+    const s = useStore.getState();
+    switch (m.type) {
       case "agent_delta":
         ensureAssistant();
         s.appendToLast(m.text);
@@ -90,8 +71,39 @@ export function sendPrompt(prompt: string): void {
         unsubscribe = null;
         activeId = null;
         break;
+    }
+  });
+}
+
+export function sendPrompt(prompt: string): void {
+  const store = useStore.getState();
+  if (store.agentRunning) return;
+
+  store.addMessage({ role: "user", content: prompt });
+  store.setAgentRunning(true, "Thinking…");
+
+  void (async () => {
+    let id: string;
+    try {
+      // The daemon tracks the open workspace per-connection. If we reconnected
+      // since opening the project, this socket has no workspace — re-open it so
+      // the agent doesn't reject with "Open a project from the Hub first."
+      const s0 = useStore.getState();
+      if (s0.transport === "daemon" && s0.activeProject && daemon.openedProject !== s0.activeProject) {
+        const { root } = await daemon.openProject(s0.activeProject);
+        useStore.getState().setTree(root);
       }
-    });
+      const st = useStore.getState();
+      const tier = (st.usage?.tier ?? 0) as Tier;
+      const effort = clampEffortForTier(tier, st.agentEffort ?? effortForTier(tier));
+      id = daemon.agentPrompt(prompt, st.agentMode, effort);
+    } catch (e) {
+      const s = useStore.getState();
+      s.addMessage({ role: "assistant", content: `⚠️ ${e instanceof Error ? e.message : String(e)}` });
+      s.setAgentRunning(false, "");
+      return;
+    }
+    attachToRun(id);
   })();
 }
 

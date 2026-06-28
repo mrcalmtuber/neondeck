@@ -10,6 +10,7 @@ import {
   GoogleAuthProvider,
   signOut as fbSignOut,
   onIdTokenChanged,
+  deleteUser,
   type Auth,
   type User,
 } from "firebase/auth";
@@ -135,6 +136,19 @@ export async function getRedirectError(): Promise<unknown | null> {
 
 export async function signOut(): Promise<void> {
   await fbSignOut(auth);
+}
+
+/**
+ * Permanently delete the signed-in user's account (irreversible). Firebase requires
+ * a RECENT login for this; if the session is stale it throws
+ * `auth/requires-recent-login`, which the caller surfaces as "sign in again and
+ * retry". Leftover server-side data (Firestore docs, synced projects) is harmless;
+ * the login — and the email — is freed immediately.
+ */
+export async function deleteAccount(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("You're not signed in.");
+  await deleteUser(user);
 }
 
 /** Resolve the current session once (waits for Firebase to restore persistence). */

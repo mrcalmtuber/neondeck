@@ -2137,6 +2137,8 @@ textarea:focus-visible {
 }
 .settings-card { padding: 18px 20px; border-radius: 14px; }
 .settings-card h3 { margin: 0 0 12px; font-size: 14px; }
+.settings-card.danger-zone { border: 1px solid color-mix(in srgb, var(--accent2) 45%, transparent); }
+.settings-card.danger-zone h3 { color: var(--accent2); }
 .settings-account { display: flex; align-items: center; gap: 14px; }
 .settings-email { font-weight: 600; }
 .profile-avatar.lg {
@@ -3541,8 +3543,30 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
   color: var(--muted, #9aa);
   border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.18));
 }
-.admin-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.admin-running { color: #4ade80; font-weight: 600; }
+.admin-email { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.admin-running { color: #4ade80; font-weight: 600; font-size: 12px; }
+
+/* ===== Admin session cards (plan + usage + controls) ===== */
+.admin-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.admin-card {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.admin-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.admin-usage { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.admin-controls { display: flex; flex-direction: column; gap: 8px; }
+.admin-ctl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.admin-input.sm { flex: 0 1 130px; padding: 5px 8px; font-size: 12px; }
+.btn-ghost.xs, .btn-danger.xs {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.btn-ghost.xs.active { border-color: var(--accent); color: var(--accent); background: var(--bg-2); }
+.btn-ghost.xs:disabled:not(.active) { opacity: 0.4; cursor: default; }
 
 /* ===== Notice toast (e.g. "an admin stopped your agent") ===== */
 .notice-toast {

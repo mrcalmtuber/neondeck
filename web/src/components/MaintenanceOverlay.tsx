@@ -1,3 +1,4 @@
+import { DEFAULT_MAINTENANCE_MESSAGE } from "@ide/shared";
 import { useStore } from "../lib/store";
 
 /**
@@ -25,10 +26,7 @@ export function MaintenanceOverlay() {
       <div className="maint-card">
         <div className="maint-icon">🛠</div>
         <h1>Under maintenance</h1>
-        <p>
-          {maintenance.message ||
-            "NeonDeck is briefly down for maintenance. Please check back in a little while."}
-        </p>
+        <p>{maintenance.message || DEFAULT_MAINTENANCE_MESSAGE}</p>
       </div>
     </div>
   );

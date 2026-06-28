@@ -13,7 +13,7 @@ import {
 import { useStore, THEMES, type Theme } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
 import { connectGitHub, getStoredGithubToken, clearGithubToken, githubAvailable } from "../lib/githubAuth";
-import { signOut } from "../lib/firebaseClient";
+import { signOut, deleteAccount } from "../lib/firebaseClient";
 import { PlanCards } from "./PlanCards";
 import { BRAND_LABEL } from "../lib/brand";
 
@@ -47,6 +47,10 @@ export function Settings() {
 
   const [busyTier, setBusyTier] = useState<Tier | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Danger zone: delete account.
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   // GitHub connection (project sync). Only surfaced when the daemon has OAuth set.
   const [ghAvailable, setGhAvailable] = useState(false);
@@ -131,6 +135,33 @@ export function Settings() {
     await signOut();
     setSession(null);
     setView("dashboard");
+  }
+
+  async function handleDeleteAccount() {
+    if (
+      !window.confirm(
+        "Permanently delete your account? This can't be undone — you'll be signed out and the email is freed to register again.",
+      )
+    )
+      return;
+    setDeleting(true);
+    setDeleteErr(null);
+    try {
+      await deleteAccount();
+      setSession(null);
+      setView("dashboard");
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? "";
+      setDeleteErr(
+        code === "auth/requires-recent-login"
+          ? "For your security, please sign out and sign back in, then delete again."
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -312,6 +343,21 @@ export function Settings() {
             </button>
           )}
         </section>
+
+        {/* Danger zone — delete account (real accounts only; the dev user has none) */}
+        {authMode !== "dev" && (
+          <section className="settings-card glass danger-zone">
+            <h3>Danger zone</h3>
+            <p className="muted small">
+              Permanently delete your account. This can’t be undone — you’ll be signed out and the
+              email is freed to register again.
+            </p>
+            {deleteErr && <div className="auth-error">⚠️ {deleteErr}</div>}
+            <button className="btn-danger sm" onClick={handleDeleteAccount} disabled={deleting}>
+              {deleting ? "Deleting…" : "🗑 Delete my account"}
+            </button>
+          </section>
+        )}
       </div>
     </div>
   );

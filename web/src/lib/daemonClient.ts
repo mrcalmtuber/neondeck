@@ -68,6 +68,9 @@ export interface HelloInfo {
   billingEnabled: boolean;
   isAdmin: boolean;
   maintenance: MaintenanceState;
+  /** Present when this connection reattached to a still-running agent (e.g. after a
+   *  full reload) — the client uses it to restore the live run's UI. */
+  activeRun?: { promptId: string; project: string } | null;
 }
 
 /**
@@ -242,6 +245,7 @@ export class DaemonClient {
               billingEnabled: hello.billingEnabled,
               isAdmin: hello.isAdmin,
               maintenance: hello.maintenance,
+              activeRun: hello.activeRun ?? null,
             };
             this.handshakeOk = true;
             dbg("hello_ok — connected");
@@ -421,6 +425,14 @@ export class DaemonClient {
   /** MAINTENANCE (temporary — remove later): flip the lockout for non-admins. */
   adminSetMaintenance(on: boolean, message: string): void {
     this.send({ type: "admin_set_maintenance", id: nextId(), on, message });
+  }
+  /** Change another user's subscription tier (0=Free,1=Pro,2=Max). */
+  adminSetTier(sessionId: string, tier: number): void {
+    this.send({ type: "admin_set_tier", id: nextId(), sessionId, tier });
+  }
+  /** Set another user's monthly token usage to an absolute value (e.g. max out). */
+  adminSetUsage(sessionId: string, tokensUsed: number): void {
+    this.send({ type: "admin_set_usage", id: nextId(), sessionId, tokensUsed });
   }
 
   // -------- Hub / projects --------
