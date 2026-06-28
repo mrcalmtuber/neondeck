@@ -41,6 +41,10 @@ interface Account {
   /** Admin suspension: when true the user is locked out with `suspendMessage`. */
   suspended?: boolean;
   suspendMessage?: string;
+  /** Temporary gratuity upgrade: grants `giftTier` until `giftUntil` (ms epoch),
+   *  then auto-reverts to the base `tier` (or higher if the base later rose). */
+  giftTier?: number;
+  giftUntil?: number;
 }
 
 interface Ledger {
@@ -171,21 +175,52 @@ export class UsageStore {
     );
   }
 
-  /** Resolve the effective tier. Dev mode forces the configured dev tier. */
+  /**
+   * Resolve the EFFECTIVE tier. A live gratuity gift (giftTier until giftUntil)
+   * temporarily raises the tier above the base; when it lapses we clear it and fall
+   * back to the base `tier` (their started/real tier — or higher if the base rose
+   * meanwhile, e.g. they bought a plan). Dev mode forces the configured dev tier.
+   */
   tierFor(userId: string, opts: { devTier?: Tier } = {}): Tier {
-    // A stored ledger tier always wins; devTier is only the INITIAL fallback for a
-    // brand-new account, so dev/loopback plan changes actually persist (and a real
-    // user, who never passes devTier, simply reads the ledger or defaults to Free).
-    const stored = this.data.accounts[userId]?.tier;
-    if (stored !== undefined) return stored;
-    return opts.devTier ?? 0;
+    const acct = this.data.accounts[userId];
+    // Lazily expire a lapsed gift.
+    if (acct?.giftUntil != null && Date.now() >= acct.giftUntil) {
+      acct.giftTier = undefined;
+      acct.giftUntil = undefined;
+      this.save(userId);
+    }
+    const base = acct?.tier ?? opts.devTier ?? 0;
+    const giftActive = acct?.giftTier != null && acct.giftUntil != null && Date.now() < acct.giftUntil;
+    return (giftActive ? Math.max(acct!.giftTier!, base) : base) as Tier;
   }
 
   setTier(userId: string, tier: Tier, stripe?: { customerId?: string; subscriptionId?: string }): void {
     const acct = (this.data.accounts[userId] ??= { tier: 0 });
-    acct.tier = tier;
+    acct.tier = tier; // the BASE tier (real entitlement); a gift overlays it via tierFor
     if (stripe?.customerId) acct.stripeCustomerId = stripe.customerId;
     if (stripe?.subscriptionId) acct.stripeSubscriptionId = stripe.subscriptionId;
+    this.save(userId);
+  }
+
+  /** The BASE tier (real entitlement), ignoring any active gratuity gift. */
+  baseTier(userId: string, opts: { devTier?: Tier } = {}): Tier {
+    return (this.data.accounts[userId]?.tier ?? opts.devTier ?? 0) as Tier;
+  }
+
+  /** Grant a temporary gratuity upgrade to `tier` until `untilMs`, then auto-revert. */
+  grantGift(userId: string, tier: Tier, untilMs: number): void {
+    const acct = (this.data.accounts[userId] ??= { tier: 0 });
+    acct.giftTier = tier;
+    acct.giftUntil = untilMs;
+    this.save(userId);
+  }
+
+  /** Remove any active gratuity gift (e.g. on a direct admin tier set / downgrade). */
+  clearGift(userId: string): void {
+    const acct = this.data.accounts[userId];
+    if (!acct) return;
+    acct.giftTier = undefined;
+    acct.giftUntil = undefined;
     this.save(userId);
   }
 

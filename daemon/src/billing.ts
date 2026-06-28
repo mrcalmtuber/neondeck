@@ -120,7 +120,9 @@ export async function reconcileTierFromStripe(
     }
   }
 
-  if (best !== null && best > store.tierFor(opts.userId)) {
+  // Compare against the BASE tier (not the effective one) so an active gratuity gift
+  // doesn't block recording a real Stripe entitlement on the base.
+  if (best !== null && best > store.baseTier(opts.userId)) {
     store.setTier(opts.userId, best, { customerId: bestCustomer, subscriptionId: bestSub });
   }
   return best;

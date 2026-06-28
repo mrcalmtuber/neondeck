@@ -791,8 +791,11 @@ async function handleMessage(
       if (user.mode === "firebase") {
         reconcileTierFromStripe(config, store, { userId: user.userId, email: user.email })
           .then((found) => {
-            if (found !== null && found !== tier) {
-              send({ type: "usage_update", id: "broadcast", usage: store.snapshot(user.userId, found) });
+            // Push the EFFECTIVE tier (which may include an active gratuity gift), not
+            // the raw Stripe `found`, so a comp upgrade isn't visually downgraded.
+            const eff = currentTier(session, config, store);
+            if (found !== null && eff !== tier) {
+              send({ type: "usage_update", id: "broadcast", usage: store.snapshot(user.userId, eff) });
             }
           })
           .catch((err) => console.warn("[billing] tier reconcile failed:", (err as Error).message));
@@ -1107,12 +1110,12 @@ async function handleMessage(
       const tier = Math.max(0, Math.min(2, Math.floor(msg.tier))) as Tier;
       await store.ensureLoaded(msg.userId);
       const prevTier = store.tierFor(msg.userId);
-      store.setTier(msg.userId, tier);
-      await store.flush(); // persist immediately so a reload can't revert it
-      const upgraded = tier > prevTier;
-      // On an upgrade, send a celebratory gratuity gift instead of a plain notice.
-      notifyUserUsage(msg.userId, upgraded ? null : `An admin set your plan to ${getTier(tier).name}.`);
-      if (upgraded) {
+      if (tier > prevTier) {
+        // Gratuity: grant the higher tier for ONE MONTH, then auto-revert to their
+        // base (started/real) tier — handled lazily by store.tierFor on expiry.
+        store.grantGift(msg.userId, tier, Date.now() + 30 * 24 * 60 * 60 * 1000);
+        await store.flush();
+        notifyUserUsage(msg.userId, null);
         const planName = getTier(tier).name;
         for (const s of activeSessions) {
           if (s.userId !== msg.userId) continue;
@@ -1124,6 +1127,12 @@ async function handleMessage(
             message: `As a gratuity, we’ve upgraded you to the ${planName} plan for one month — no charge. Thank you for being part of NeonDeck.`,
           });
         }
+      } else {
+        // Direct set (downgrade or same): clear any gift and set the base tier.
+        store.clearGift(msg.userId);
+        store.setTier(msg.userId, tier);
+        await store.flush();
+        notifyUserUsage(msg.userId, `An admin set your plan to ${getTier(tier).name}.`);
       }
       broadcastAdminState();
       return;

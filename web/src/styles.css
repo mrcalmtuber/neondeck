@@ -3676,7 +3676,7 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
 /* ===== MAINTENANCE (temporary — remove later) ===== */
 .maint-banner {
   position: fixed;
-  top: 0;
+  bottom: 0; /* sits at the BOTTOM so it never covers the top menu/nav */
   left: 0;
   right: 0;
   z-index: 8500;
@@ -3686,6 +3686,7 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
   font-weight: 600;
   color: #fff;
   background: linear-gradient(90deg, #d61f43, #ff3b5c);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
 }
 .maint-overlay {
   position: fixed;
