@@ -242,6 +242,44 @@ export class UsageStore {
     return override == null ? getTier(tier).tokenLimit : override;
   }
 
+  /** Every user active since `sinceMs` (by the doc's `updatedAt`), for the admin
+   *  "all users" list. Reads Firestore directly so offline users are included;
+   *  falls back to the in-memory ledger when Firestore isn't configured (dev). */
+  async listRecentUsers(
+    sinceMs: number,
+  ): Promise<
+    Array<{ userId: string; tier: Tier; tokensUsed: number; tokensLimit: number; limitOverride: number | null }>
+  > {
+    const period = currentPeriod();
+    const build = (userId: string, account: Account | undefined, monthly: Record<string, number> | undefined) => {
+      const tier = (account?.tier ?? 0) as Tier;
+      const limitOverride = account?.limitOverride ?? null;
+      const tokensUsed = monthly?.[period] ?? 0;
+      const tokensLimit = limitOverride == null ? getTier(tier).tokenLimit : limitOverride;
+      return { userId, tier, tokensUsed, tokensLimit, limitOverride };
+    };
+    if (this.fs) {
+      try {
+        const snap = await this.fs
+          .collection(USAGE_COLLECTION)
+          .where("updatedAt", ">=", sinceMs)
+          .orderBy("updatedAt", "desc")
+          .limit(500)
+          .get();
+        return snap.docs.map((d) => {
+          const data = d.data() as { account?: Account; monthly?: Record<string, number> };
+          return build(d.id, data.account, data.monthly);
+        });
+      } catch (err) {
+        console.warn("[usage] listRecentUsers failed:", (err as Error).message);
+        return [];
+      }
+    }
+    return Object.keys(this.data.accounts).map((userId) =>
+      build(userId, this.data.accounts[userId], this.data.usage[userId]),
+    );
+  }
+
   /** Tokens charged to a user today (UTC) — backs the hidden Free daily cap. */
   tokensUsedToday(userId: string, day = currentDay()): number {
     return this.data.usageDaily[userId]?.[day] ?? 0;

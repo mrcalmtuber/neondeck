@@ -8,6 +8,7 @@ import {
   type RuntimeMode,
   type ProcessInfo,
   type AdminSessionInfo,
+  type AdminUserInfo,
   type MaintenanceState,
 } from "@ide/shared";
 import { allowedOriginFor, loopbackDevAllowed, type DaemonConfig } from "./config.js";
@@ -38,7 +39,7 @@ import { openTunnel, type TunnelHandle } from "./tunnel.js";
 import { authenticate, authConfigured, userRoot, userStorageKey, type AuthMode } from "./auth.js";
 import { pushProject, pullProject, listRemoteProjects } from "./githubSync.js";
 import { UsageStore, type Meter } from "./usage.js";
-import { initFirestore, lookupUserByEmail } from "./firebaseAdmin.js";
+import { initFirestore, lookupUserByEmail, lookupEmails } from "./firebaseAdmin.js";
 import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
 import { createApiHandler } from "./httpApi.js";
 import {
@@ -1137,6 +1138,46 @@ async function handleMessage(
           online: [...activeSessions].some((s) => s.userId === found.userId),
         },
       });
+    }
+    case "admin_list_users": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      const cutoff = msg.sinceMs ?? Date.now() - 4 * 24 * 60 * 60 * 1000; // last 4 days
+      const recent = await store.listRecentUsers(cutoff);
+      const byId = new Map<string, (typeof recent)[number]>();
+      for (const r of recent) byId.set(r.userId, r);
+      // Overlay live values + emails for connected users (always include them).
+      const liveEmail = new Map<string, string | null>();
+      const online = new Set<string>();
+      for (const s of activeSessions) {
+        if (!s.userId) continue;
+        online.add(s.userId);
+        liveEmail.set(s.userId, s.email);
+        const t = currentTier(s, config, store);
+        const snap = store.snapshot(s.userId, t);
+        byId.set(s.userId, {
+          userId: s.userId,
+          tier: t,
+          tokensUsed: snap.tokensUsed,
+          tokensLimit: snap.tokensLimit,
+          limitOverride: store.limitOverride(s.userId),
+        });
+      }
+      const uids = [...byId.keys()];
+      const emails = await lookupEmails(uids);
+      const users: AdminUserInfo[] = uids.map((uid) => {
+        const r = byId.get(uid)!;
+        return {
+          userId: uid,
+          email: liveEmail.get(uid) ?? emails[uid] ?? null,
+          tier: r.tier,
+          tokensUsed: r.tokensUsed,
+          tokensLimit: r.tokensLimit,
+          limitOverride: r.limitOverride,
+          online: online.has(uid),
+        };
+      });
+      users.sort((a, b) => Number(b.online) - Number(a.online) || b.tokensUsed - a.tokensUsed);
+      return send({ type: "admin_users", id: msg.id, users });
     }
 
     case "stop_agent": {

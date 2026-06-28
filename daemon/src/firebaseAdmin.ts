@@ -71,3 +71,19 @@ export async function lookupUserByEmail(
     return null; // no such user / auth error
   }
 }
+
+/** Resolve emails for a batch of uids (for the admin "all users" list). */
+export async function lookupEmails(uids: string[]): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = {};
+  if (!adminApp || uids.length === 0) return out;
+  try {
+    const auth = getAuth(adminApp);
+    for (let i = 0; i < uids.length; i += 100) {
+      const res = await auth.getUsers(uids.slice(i, i + 100).map((uid) => ({ uid })));
+      for (const u of res.users) out[u.uid] = u.email ?? null;
+    }
+  } catch (err) {
+    console.warn("[admin] lookupEmails failed:", (err as Error).message);
+  }
+  return out;
+}

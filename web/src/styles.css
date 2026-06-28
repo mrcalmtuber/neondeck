@@ -3548,6 +3548,17 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
 
 /* ===== Admin session cards (plan + usage + controls) ===== */
 .admin-cards { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.admin-row-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  font-size: 13px;
+}
+.admin-row-live .admin-email { flex: 1 1 160px; }
 .admin-card {
   border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
   border-radius: 12px;

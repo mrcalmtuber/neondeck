@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   formatTokens,
   getTier,
   DEFAULT_MAINTENANCE_MESSAGE,
-  type AdminSessionInfo,
   type AdminUserInfo,
   type Tier,
 } from "@ide/shared";
@@ -11,7 +10,7 @@ import { useStore } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
 import { BRAND_LABEL } from "../lib/brand";
 
-/** Compact "time since" label (updates whenever the session list re-renders). */
+/** Compact "time since" label (updates whenever the list re-renders). */
 function ago(ms: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
   if (s < 60) return `${s}s`;
@@ -21,12 +20,13 @@ function ago(ms: number): string {
 }
 
 const TIERS = [0, 1, 2] as const;
+const REFRESH_MS = 60_000; // re-pull the all-users list every minute
 
 /**
- * Admin ops dashboard (View "admin"): connected sessions (plan + usage, with live
- * controls) PLUS a "manage any user by email" lookup so offline users can be edited
- * too. Change tier, set/max-out usage, set a custom token limit, cancel agents, and
- * toggle maintenance. All actions are re-checked server-side (rejected for non-admins).
+ * Admin ops dashboard (View "admin"): every user active in the last 4 days (auto-
+ * refreshing each minute) with controls to change tier, set/max-out usage, and set a
+ * custom token limit — online or offline. Plus a live "active sessions" strip (agent
+ * step + cancel) and the maintenance toggle. All actions are re-checked server-side.
  */
 export function AdminDashboard() {
   const isAdmin = useStore((s) => s.isAdmin);
@@ -105,9 +105,7 @@ export function AdminDashboard() {
           </div>
         </section>
 
-        {/* Manage ANY user (online or offline) by email */}
-        <ManageUserPanel />
-
+        {/* Live agent control (every connected session) */}
         <section className="settings-card glass">
           <h3>
             Active sessions{" "}
@@ -120,129 +118,126 @@ export function AdminDashboard() {
           ) : (
             <div className="admin-cards">
               {sessions.map((s) => (
-                <SessionCard key={s.sessionId} s={s} />
+                <div className="admin-row-live" key={s.sessionId}>
+                  <span className="admin-email">
+                    {s.email ?? (s.authMode === "dev" ? "local-dev" : "—")}
+                  </span>
+                  <span className="muted small">{s.project ?? "no project"}</span>
+                  {s.agentRunning ? (
+                    <span className="admin-running">▶ step {s.agentStep ?? "?"}</span>
+                  ) : (
+                    <span className="muted small">idle</span>
+                  )}
+                  <span className="muted small">{ago(s.connectedAtMs)}</span>
+                  <button
+                    className="btn-ghost xs"
+                    disabled={!s.agentRunning}
+                    onClick={() => daemon.adminCancelAgent(s.sessionId)}
+                  >
+                    Cancel agent
+                  </button>
+                </div>
               ))}
             </div>
           )}
         </section>
+
+        {/* Every user in the last 4 days (auto-refreshing) */}
+        <AllUsersPanel />
       </div>
     </div>
   );
 }
 
-/** Look up any user by email and edit their plan/usage/limit (works offline). */
-function ManageUserPanel() {
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
+/** Every user active in the last 4 days, auto-refreshing each minute, each editable. */
+function AllUsersPanel() {
+  const [users, setUsers] = useState<AdminUserInfo[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [user, setUser] = useState<AdminUserInfo | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number>(0);
+  const inFlight = useRef(false);
 
-  async function lookup() {
-    const addr = email.trim();
-    if (!addr) return;
-    setBusy(true);
-    setErr(null);
-    setNotFound(false);
+  const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
-      const u = await daemon.adminLookupUser(addr);
-      setUser(u);
-      setNotFound(!u);
+      const list = await daemon.adminListUsers();
+      setUsers(list);
+      setUpdatedAt(Date.now());
+      setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      inFlight.current = false;
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const t = setInterval(() => void refresh(), REFRESH_MS);
+    return () => clearInterval(t);
+  }, [refresh]);
 
   return (
     <section className="settings-card glass">
-      <h3>Manage any user</h3>
-      <p className="muted small">
-        Look up a user by email (even if they’re offline) to change their tier, usage, or token
-        limit. Requires the Firebase service account to be configured.
-      </p>
-      <div className="admin-maint-row">
-        <input
-          className="admin-input"
-          type="email"
-          placeholder="user@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && lookup()}
-        />
-        <button className="btn-neon sm" onClick={lookup} disabled={busy || !email.trim()}>
-          {busy ? "Looking…" : "Look up"}
+      <h3>
+        All users{" "}
+        <span className="muted small">
+          · last 4 days · {users?.length ?? 0} user{users?.length === 1 ? "" : "s"} · auto-refreshes
+          every minute
+          {updatedAt ? ` · updated ${ago(updatedAt)} ago` : ""}
+        </span>
+        <button className="btn-ghost xs" style={{ marginLeft: 8 }} onClick={() => void refresh()}>
+          ⟳ Refresh
         </button>
-      </div>
+      </h3>
       {err && <div className="auth-error">⚠️ {err}</div>}
-      {notFound && <p className="muted small">No user found with that email.</p>}
-      {user && (
-        <div className="admin-card" style={{ marginTop: 10 }}>
-          <div className="admin-card-head">
-            <span className="admin-email">{user.email ?? user.userId}</span>
-            <span className={`tier-badge tier-${getTier(user.tier as Tier).key}`}>
-              {getTier(user.tier as Tier).name}
-            </span>
-            <span className="muted small">{user.online ? "● online" : "○ offline"}</span>
-          </div>
-          <div className="admin-usage">
-            <span className="muted small">
-              {formatTokens(user.tokensUsed)} / {formatTokens(user.tokensLimit)} tokens this month
-              {user.limitOverride != null ? " (custom limit)" : ""}
-            </span>
-          </div>
-          <TierUsageControls
-            userId={user.userId}
-            tier={user.tier}
-            tokensLimit={user.tokensLimit}
-            limitOverride={user.limitOverride}
-            onAfter={lookup}
-          />
+      {users == null ? (
+        <p className="muted small">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="muted small">
+          No users in the last 4 days. (If this looks wrong, the Firebase service account may not be
+          configured, or the daemon hasn’t redeployed yet.)
+        </p>
+      ) : (
+        <div className="admin-cards">
+          {users.map((u) => (
+            <UserCard key={u.userId} u={u} onAfter={refresh} />
+          ))}
         </div>
       )}
     </section>
   );
 }
 
-/** One connected session: plan + usage at a glance, with admin controls. */
-function SessionCard({ s }: { s: AdminSessionInfo }) {
-  const pct = s.tokensLimit > 0 ? Math.min(100, Math.round((s.tokensUsed / s.tokensLimit) * 100)) : 0;
+/** One user row: plan + usage at a glance, with tier / usage / limit controls. */
+function UserCard({ u, onAfter }: { u: AdminUserInfo; onAfter: () => void }) {
+  const pct = u.tokensLimit > 0 ? Math.min(100, Math.round((u.tokensUsed / u.tokensLimit) * 100)) : 0;
   return (
     <div className="admin-card">
       <div className="admin-card-head">
-        <span className="admin-email">{s.email ?? (s.authMode === "dev" ? "local-dev" : "—")}</span>
-        <span className={`tier-badge tier-${getTier(s.tier as Tier).key}`}>
-          {getTier(s.tier as Tier).name}
+        <span className="admin-email">{u.email ?? u.userId}</span>
+        <span className={`tier-badge tier-${getTier(u.tier as Tier).key}`}>
+          {getTier(u.tier as Tier).name}
         </span>
-        {s.agentRunning ? (
-          <span className="admin-running">▶ agent · step {s.agentStep ?? "?"}</span>
-        ) : (
-          <span className="muted small">idle</span>
-        )}
         <span className="muted small" style={{ marginLeft: "auto" }}>
-          {s.project ?? "no project"} · {s.procCount} proc{s.procCount === 1 ? "" : "s"} ·{" "}
-          {ago(s.connectedAtMs)}
+          {u.online ? "● online" : "○ offline"}
         </span>
       </div>
-
       <div className="admin-usage">
         <div className="usage-meter-bar wide">
           <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
         </div>
         <span className="muted small">
-          {formatTokens(s.tokensUsed)} / {formatTokens(s.tokensLimit)} tokens this month ({pct}%)
-          {s.limitOverride != null ? " · custom limit" : ""}
+          {formatTokens(u.tokensUsed)} / {formatTokens(u.tokensLimit)} tokens this month ({pct}%)
+          {u.limitOverride != null ? " · custom limit" : ""}
         </span>
       </div>
-
       <TierUsageControls
-        userId={s.userId}
-        tier={s.tier}
-        tokensLimit={s.tokensLimit}
-        limitOverride={s.limitOverride}
-        agentRunning={s.agentRunning}
-        sessionId={s.sessionId}
+        userId={u.userId}
+        tier={u.tier}
+        tokensLimit={u.tokensLimit}
+        limitOverride={u.limitOverride}
+        onAfter={onAfter}
       />
     </div>
   );
@@ -254,37 +249,21 @@ function TierUsageControls({
   tier,
   tokensLimit,
   limitOverride,
-  agentRunning,
-  sessionId,
   onAfter,
 }: {
-  userId: string | null;
+  userId: string;
   tier: number;
   tokensLimit: number;
   limitOverride: number | null;
-  agentRunning?: boolean;
-  sessionId?: string;
-  onAfter?: () => void;
+  onAfter: () => void;
 }) {
   const [usageInput, setUsageInput] = useState("");
   const [limitInput, setLimitInput] = useState("");
-  const disabled = !userId;
-  const after = () => setTimeout(() => onAfter?.(), 300); // refresh an offline lookup
+  const after = () => setTimeout(onAfter, 350); // let the write land, then refresh
 
   function num(v: string): number | null {
     const n = Number(v.replace(/[, _]/g, ""));
     return Number.isFinite(n) && n >= 0 ? n : null;
-  }
-  function setTier(t: Tier) {
-    if (userId) (daemon.adminSetTier(userId, t), after());
-  }
-  function setUsage() {
-    const n = num(usageInput);
-    if (userId && n != null) (daemon.adminSetUsage(userId, n), setUsageInput(""), after());
-  }
-  function setLimit() {
-    const n = num(limitInput);
-    if (userId && n != null) (daemon.adminSetLimit(userId, n), setLimitInput(""), after());
   }
 
   return (
@@ -295,8 +274,11 @@ function TierUsageControls({
           <button
             key={t}
             className={`btn-ghost xs ${tier === t ? "active" : ""}`}
-            disabled={disabled || tier === t}
-            onClick={() => setTier(t)}
+            disabled={tier === t}
+            onClick={() => {
+              daemon.adminSetTier(userId, t);
+              after();
+            }}
           >
             {getTier(t).name}
           </button>
@@ -309,26 +291,39 @@ function TierUsageControls({
           inputMode="numeric"
           placeholder="tokens"
           value={usageInput}
-          disabled={disabled}
           onChange={(e) => setUsageInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setUsage()}
         />
-        <button className="btn-ghost xs" disabled={disabled || !usageInput.trim()} onClick={setUsage}>
+        <button
+          className="btn-ghost xs"
+          disabled={!usageInput.trim()}
+          onClick={() => {
+            const n = num(usageInput);
+            if (n != null) {
+              daemon.adminSetUsage(userId, n);
+              setUsageInput("");
+              after();
+            }
+          }}
+        >
           Set
         </button>
         <button
           className="btn-danger xs"
-          disabled={disabled}
           title="Set usage to the limit (hit their limit / paywall them)"
-          onClick={() => userId && (daemon.adminSetUsage(userId, tokensLimit), after())}
+          onClick={() => {
+            daemon.adminSetUsage(userId, tokensLimit);
+            after();
+          }}
         >
           Max out
         </button>
         <button
           className="btn-ghost xs"
-          disabled={disabled}
           title="Reset usage to 0"
-          onClick={() => userId && (daemon.adminSetUsage(userId, 0), after())}
+          onClick={() => {
+            daemon.adminSetUsage(userId, 0);
+            after();
+          }}
         >
           Reset
         </button>
@@ -340,33 +335,34 @@ function TierUsageControls({
           inputMode="numeric"
           placeholder="custom max tokens"
           value={limitInput}
-          disabled={disabled}
           onChange={(e) => setLimitInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setLimit()}
         />
-        <button className="btn-ghost xs" disabled={disabled || !limitInput.trim()} onClick={setLimit}>
+        <button
+          className="btn-ghost xs"
+          disabled={!limitInput.trim()}
+          onClick={() => {
+            const n = num(limitInput);
+            if (n != null) {
+              daemon.adminSetLimit(userId, n);
+              setLimitInput("");
+              after();
+            }
+          }}
+        >
           Set
         </button>
         <button
           className="btn-ghost xs"
-          disabled={disabled || limitOverride == null}
+          disabled={limitOverride == null}
           title="Clear the custom limit (back to the plan default)"
-          onClick={() => userId && (daemon.adminSetLimit(userId, null), after())}
+          onClick={() => {
+            daemon.adminSetLimit(userId, null);
+            after();
+          }}
         >
           Use plan default
         </button>
       </div>
-      {sessionId && (
-        <div className="admin-ctl">
-          <button
-            className="btn-ghost xs"
-            disabled={!agentRunning}
-            onClick={() => daemon.adminCancelAgent(sessionId)}
-          >
-            Cancel agent
-          </button>
-        </div>
-      )}
     </div>
   );
 }

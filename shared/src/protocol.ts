@@ -270,6 +270,12 @@ export interface AdminLookupUserRequest {
   id: string;
   email: string;
 }
+/** Admin: list every user active within the last `sinceMs` window (default 4 days). */
+export interface AdminListUsersRequest {
+  type: "admin_list_users";
+  id: string;
+  sinceMs?: number;
+}
 
 // Feature A — inline AI
 export interface AiExplainRequest {
@@ -408,7 +414,8 @@ export type ClientMessage =
   | AdminSetTierRequest
   | AdminSetUsageRequest
   | AdminSetLimitRequest
-  | AdminLookupUserRequest;
+  | AdminLookupUserRequest
+  | AdminListUsersRequest;
 
 // ---------------------------------------------------------------------------
 // Daemon -> Browser
@@ -708,6 +715,12 @@ export interface AdminUserMessage {
   id: string;
   user: AdminUserInfo | null;
 }
+/** Reply to admin_list_users — every user active in the requested window. */
+export interface AdminUsersMessage {
+  type: "admin_users";
+  id: string;
+  users: AdminUserInfo[];
+}
 /** A lightweight toast pushed to a user (e.g. "an admin stopped your agent"). */
 export interface NoticeMessage {
   type: "notice";
@@ -751,5 +764,6 @@ export type ServerMessage =
   | ErrorMessage
   | AdminStateMessage
   | AdminUserMessage
+  | AdminUsersMessage
   | MaintenanceChangedMessage
   | NoticeMessage;

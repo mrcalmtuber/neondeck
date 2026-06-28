@@ -445,6 +445,12 @@ export class DaemonClient {
     if (res.type !== "admin_user") throw new Error("Unexpected lookup response");
     return res.user;
   }
+  /** Every user active in the last `sinceMs` window (default 4 days, server-side). */
+  async adminListUsers(sinceMs?: number): Promise<AdminUserInfo[]> {
+    const res = await this.request({ type: "admin_list_users", id: nextId(), sinceMs });
+    if (res.type !== "admin_users") throw new Error("Unexpected list response");
+    return res.users;
+  }
 
   // -------- Hub / projects --------
 
