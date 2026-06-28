@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
-import type { FileNode } from "@ide/shared";
+import type { FileNode, SearchMatch } from "@ide/shared";
 
 /** Directory names we never surface in the tree. */
 const IGNORED = new Set(["node_modules", ".git", ".DS_Store", "dist", ".next", ".neondeck"]);
@@ -52,6 +52,83 @@ async function walk(absPath: string, root: string): Promise<FileNode> {
 export async function readFile(workspaceDir: string, relPath: string): Promise<string> {
   const abs = safeResolve(workspaceDir, relPath);
   return fs.readFile(abs, "utf8");
+}
+
+// ---------------------------------------------------------------------------
+// Project-wide text search (grep). Reuses the IGNORED set so node_modules/.git
+// etc. are skipped; skips large/binary files; caps results to bound the payload.
+// ---------------------------------------------------------------------------
+
+const SEARCH_MAX_MATCHES = 200;
+const SEARCH_MAX_FILE_BYTES = 1_000_000; // 1 MB — skip anything bigger
+const SEARCH_PREVIEW_MAX = 200;
+
+/** Collect every (non-ignored) file path under the workspace, relative + posix. */
+async function listAllFiles(absDir: string, root: string, out: string[]): Promise<void> {
+  const entries = await fs.readdir(absDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (IGNORED.has(entry.name)) continue;
+    const abs = path.join(absDir, entry.name);
+    if (entry.isDirectory()) {
+      await listAllFiles(abs, root, out);
+    } else if (entry.isFile()) {
+      out.push(toPosix(path.relative(root, abs)));
+    }
+  }
+}
+
+export async function searchFiles(
+  workspaceDir: string,
+  query: string,
+  opts: { caseSensitive?: boolean } = {},
+): Promise<{ matches: SearchMatch[]; truncated: boolean }> {
+  const root = path.resolve(workspaceDir);
+  const term = opts.caseSensitive ? query : query.toLowerCase();
+  if (!term) return { matches: [], truncated: false };
+
+  const files: string[] = [];
+  await listAllFiles(root, root, files);
+  files.sort();
+
+  const matches: SearchMatch[] = [];
+  let truncated = false;
+
+  for (const rel of files) {
+    if (matches.length >= SEARCH_MAX_MATCHES) {
+      truncated = true;
+      break;
+    }
+    const abs = safeResolve(workspaceDir, rel);
+    let content: string;
+    try {
+      const stat = await fs.stat(abs);
+      if (stat.size > SEARCH_MAX_FILE_BYTES) continue;
+      content = await fs.readFile(abs, "utf8");
+    } catch {
+      continue; // unreadable / vanished — skip
+    }
+    if (content.indexOf("\u0000") !== -1) continue; // NUL byte => looks binary, skip
+
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const hay = opts.caseSensitive ? raw : raw.toLowerCase();
+      const col = hay.indexOf(term);
+      if (col === -1) continue;
+      matches.push({
+        path: rel,
+        line: i + 1,
+        col,
+        preview: raw.trim().slice(0, SEARCH_PREVIEW_MAX),
+      });
+      if (matches.length >= SEARCH_MAX_MATCHES) {
+        truncated = true;
+        break;
+      }
+    }
+  }
+
+  return { matches, truncated };
 }
 
 export async function writeFile(

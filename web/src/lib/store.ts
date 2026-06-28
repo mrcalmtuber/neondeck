@@ -16,6 +16,7 @@ import type {
 import { TIERS } from "@ide/shared";
 import type { AuthSession } from "./firebaseClient";
 import { currentPeriod } from "./mockSession";
+import { loadChat, clearChat } from "./chatHistory";
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool";
@@ -160,6 +161,9 @@ interface AppState {
   setOpenFile: (path: string, content: string) => void;
   setFileContent: (content: string) => void;
   markSaved: () => void;
+  /** Line (1-based) the editor should scroll to once, e.g. from a search hit. */
+  gotoLine: number | null;
+  setGotoLine: (n: number | null) => void;
 
   // ---- live view ----
   previewUrl: string | null;
@@ -215,6 +219,10 @@ interface AppState {
   setAgentRunning: (running: boolean, status?: string) => void;
   setAgentStatus: (status: string) => void;
   resetChat: () => void;
+  /** Load a project's persisted chat into the store (on project open). */
+  loadChatForProject: (project: string) => void;
+  /** Empty the active project's chat AND forget its saved history. */
+  clearActiveChat: () => void;
 }
 
 const THEME_KEY = "ide.theme";
@@ -308,6 +316,8 @@ export const useStore = create<AppState>((set, get) => ({
   setOpenFile: (openFile, fileContent) => set({ openFile, fileContent, dirty: false }),
   setFileContent: (fileContent) => set({ fileContent, dirty: true }),
   markSaved: () => set({ dirty: false }),
+  gotoLine: null,
+  setGotoLine: (gotoLine) => set({ gotoLine }),
 
   previewUrl: null,
   previewSlot: null,
@@ -361,4 +371,16 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ agentRunning, agentStatus: agentStatus ?? s.agentStatus })),
   setAgentStatus: (agentStatus) => set({ agentStatus }),
   resetChat: () => set({ messages: [], agentRunning: false, agentStatus: "" }),
+  loadChatForProject: (project) =>
+    set({
+      messages: loadChat(get().userId, project),
+      agentRunning: false,
+      agentStatus: "",
+      pendingApproval: null,
+    }),
+  clearActiveChat: () => {
+    const { userId, activeProject } = get();
+    if (activeProject) clearChat(userId, activeProject);
+    set({ messages: [], agentRunning: false, agentStatus: "" });
+  },
 }));

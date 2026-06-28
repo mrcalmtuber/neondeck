@@ -10,6 +10,7 @@ import { SubscriptionModal } from "./components/SubscriptionModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { MaintenanceOverlay } from "./components/MaintenanceOverlay";
 import { daemon } from "./lib/daemonClient";
+import { saveChat } from "./lib/chatHistory";
 import { getStoredGithubToken } from "./lib/githubAuth";
 import { currentSession, onAuthChange } from "./lib/firebaseClient";
 import { ensureUserDoc } from "./lib/projectsService";
@@ -182,6 +183,25 @@ export function App() {
     const t = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(t);
   }, [notice, setNotice]);
+
+  // Persist the agent chat per project (debounced) so a reload / project switch
+  // restores it. Debounce is essential: appendToLast fires per streamed token,
+  // so we must not write to localStorage on every delta.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsub = useStore.subscribe((state, prev) => {
+      if (state.messages === prev.messages) return;
+      const project = state.activeProject;
+      if (!project) return;
+      const { userId, messages } = state;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => saveChat(userId, project, messages), 500);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsub();
+    };
+  }, []);
 
   // Returning from Stripe Checkout: refresh tier/usage and clean the URL.
   useEffect(() => {

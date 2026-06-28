@@ -163,6 +163,14 @@ export interface ReadFileRequest {
   filePath: string;
 }
 
+/** Project-wide text search across the open workspace's files. */
+export interface SearchFilesRequest {
+  type: "search_files";
+  id: string;
+  query: string;
+  caseSensitive?: boolean;
+}
+
 export interface ManualCreateRequest {
   type: "manual_create";
   id: string;
@@ -339,6 +347,7 @@ export type ClientMessage =
   | OpenProjectRequest
   | ListTreeRequest
   | ReadFileRequest
+  | SearchFilesRequest
   | ManualCreateRequest
   | ManualUpdateRequest
   | ManualDeleteRequest
@@ -451,6 +460,20 @@ export interface FileContentResponse {
   id: string;
   filePath: string;
   content: string;
+}
+
+/** A single project-search hit. `line` is 1-based; `col` is the match offset. */
+export interface SearchMatch {
+  path: string;
+  line: number;
+  col: number;
+  preview: string;
+}
+export interface SearchResultsResponse {
+  type: "search_results";
+  id: string;
+  matches: SearchMatch[];
+  truncated: boolean;
 }
 export interface ManualOkResponse {
   type: "manual_ok";
@@ -635,6 +658,7 @@ export type ServerMessage =
   | TreeResponse
   | WorkspaceChangedMessage
   | FileContentResponse
+  | SearchResultsResponse
   | ManualOkResponse
   | TerminalOutputMessage
   | CommandExitMessage

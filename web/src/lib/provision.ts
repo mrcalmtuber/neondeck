@@ -117,7 +117,7 @@ function enterIde(name: string, root: import("@ide/shared").FileNode): void {
   s.setTree(root);
   s.setOpenFile("", ""); // open with the agent (not the editor) in the left pane
   s.setPreview(null, null); // clear any prior project's running preview
-  s.resetChat();
+  s.loadChatForProject(name);
   s.setView("ide");
 }
 

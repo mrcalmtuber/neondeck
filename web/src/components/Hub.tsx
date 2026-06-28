@@ -47,7 +47,7 @@ export function Hub() {
       useStore.getState().setActiveProject(name);
       useStore.getState().setTree(root);
       useStore.getState().setOpenFile("", "");
-      useStore.getState().resetChat();
+      useStore.getState().loadChatForProject(name);
       useStore.getState().setView("ide");
     } finally {
       setBusy(null);

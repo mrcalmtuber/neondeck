@@ -19,6 +19,7 @@ import {
   type UsageSnapshot,
   type Tier,
   type MaintenanceState,
+  type SearchMatch,
 } from "@ide/shared";
 
 /**
@@ -323,6 +324,21 @@ export class DaemonClient {
     const res = await this.request({ type: "read_file", id: nextId(), filePath });
     if (res.type !== "file_content") throw new Error("Unexpected read response");
     return res.content;
+  }
+
+  /** Project-wide text search across the open workspace. */
+  async searchFiles(
+    query: string,
+    opts: { caseSensitive?: boolean } = {},
+  ): Promise<{ matches: SearchMatch[]; truncated: boolean }> {
+    const res = await this.request({
+      type: "search_files",
+      id: nextId(),
+      query,
+      caseSensitive: opts.caseSensitive,
+    });
+    if (res.type !== "search_results") throw new Error("Unexpected search response");
+    return { matches: res.matches, truncated: res.truncated };
   }
 
   /** MANUAL_UPDATE — editor save / write file contents. */

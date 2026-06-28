@@ -262,7 +262,7 @@ function ProjectsPanel({ onCreate }: { onCreate: () => void }) {
       s.setTree(root);
       s.setOpenFile("", "");
       s.setPreview(null, null); // clear any prior project's running preview
-      s.resetChat();
+      s.loadChatForProject(workspaceName);
       s.setView("ide");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

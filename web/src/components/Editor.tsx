@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { useStore } from "../lib/store";
 import { ws } from "../lib/workspaceService";
@@ -30,8 +30,11 @@ export function Editor() {
   const setFileContent = useStore((s) => s.setFileContent);
   const setOpenFile = useStore((s) => s.setOpenFile);
   const markSaved = useStore((s) => s.markSaved);
+  const gotoLine = useStore((s) => s.gotoLine);
+  const setGotoLine = useStore((s) => s.setGotoLine);
   const [savedAt, setSavedAt] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewRef = useRef<EditorView | null>(null);
 
   // Inline AI state
   const [sel, setSel] = useState<Sel | null>(null);
@@ -55,6 +58,21 @@ export function Editor() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileContent, openFile, dirty]);
+
+  // Scroll to a requested line (e.g. from a search hit), then clear the request.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!gotoLine || !view) return;
+    const lineNo = Math.min(Math.max(gotoLine, 1), view.state.doc.lines);
+    const line = view.state.doc.line(lineNo);
+    view.dispatch({
+      selection: { anchor: line.from },
+      effects: EditorView.scrollIntoView(line.from, { y: "center" }),
+    });
+    view.focus();
+    setGotoLine(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gotoLine, openFile, fileContent]);
 
   function onMouseUp() {
     if (!aiEnabled) return;
@@ -139,6 +157,7 @@ export function Editor() {
         height="100%"
         theme={cmTheme}
         extensions={[javascript({ jsx: true, typescript: true })]}
+        onCreateEditor={(view) => (viewRef.current = view)}
         onChange={setFileContent}
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "s") {

@@ -45,6 +45,8 @@ export function AgentPanel() {
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
   const setSubscriptionModalOpen = useStore((s) => s.setSubscriptionModalOpen);
+  const messageCount = useStore((s) => s.messages.length);
+  const clearActiveChat = useStore((s) => s.clearActiveChat);
   const [input, setInput] = useState("");
   const [effortOpen, setEffortOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -96,6 +98,17 @@ export function AgentPanel() {
         {!agentReady && session && (
           <button className="btn-ghost sm" onClick={reconnectDaemon} title="Retry the daemon connection">
             ⚡ Reconnect
+          </button>
+        )}
+        {messageCount > 0 && !agentRunning && (
+          <button
+            className="btn-ghost sm agent-clear"
+            onClick={() => {
+              if (confirm("Clear this project's chat history? This can't be undone.")) clearActiveChat();
+            }}
+            title="Clear this project's saved conversation"
+          >
+            🗑 Clear chat
           </button>
         )}
       </div>

@@ -11,7 +11,7 @@ import {
   type MaintenanceState,
 } from "@ide/shared";
 import { allowedOriginFor, loopbackDevAllowed, type DaemonConfig } from "./config.js";
-import { buildTree, readFile, createEntry, writeFileSync, deleteEntry } from "./workspace.js";
+import { buildTree, readFile, searchFiles, createEntry, writeFileSync, deleteEntry } from "./workspace.js";
 import { stopContainer, dockerAvailable } from "./docker.js";
 import { exec, detectMode } from "./executor.js";
 import { watchWorkspace, type Watcher } from "./watcher.js";
@@ -702,6 +702,13 @@ async function handleMessage(
     case "read_file": {
       const content = await readFile(requireWs(session), msg.filePath);
       return send({ type: "file_content", id: msg.id, filePath: msg.filePath, content });
+    }
+
+    case "search_files": {
+      const { matches, truncated } = await searchFiles(requireWs(session), msg.query, {
+        caseSensitive: msg.caseSensitive,
+      });
+      return send({ type: "search_results", id: msg.id, matches, truncated });
     }
 
     case "manual_create":

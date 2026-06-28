@@ -1,7 +1,8 @@
-import { useState } from "react";
-import type { FileNode } from "@ide/shared";
+import { useState, useEffect } from "react";
+import type { FileNode, SearchMatch } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { ws } from "../lib/workspaceService";
+import { daemon } from "../lib/daemonClient";
 import { PromptDialog } from "./PromptDialog";
 
 type Dialog =
@@ -10,12 +11,46 @@ type Dialog =
   | { kind: "delete"; path: string }
   | null;
 
-/** File tree synced with the workspace + New / Delete actions. */
+/** File tree synced with the workspace + New / Delete actions + project search. */
 export function FileExplorer() {
   const tree = useStore((s) => s.tree);
   const setTree = useStore((s) => s.setTree);
   const selectedPath = useStore((s) => s.selectedPath);
   const [dialog, setDialog] = useState<Dialog>(null);
+
+  // ---- project-wide search ----
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<{ matches: SearchMatch[]; truncated: boolean } | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  // Debounced search: fire ~250ms after the user stops typing.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(() => {
+      daemon
+        .searchFiles(q)
+        .then(setResults)
+        .catch(() => setResults({ matches: [], truncated: false }))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  /** Open a search hit in the editor and scroll to its line. */
+  async function openHit(hit: SearchMatch) {
+    const s = useStore.getState();
+    s.setSelected(hit.path);
+    const content = await ws.read(hit.path);
+    s.setOpenFile(hit.path, content);
+    s.setGotoLine(hit.line);
+  }
 
   async function refresh() {
     setTree(await ws.listTree());
@@ -50,6 +85,18 @@ export function FileExplorer() {
       <div className="explorer-header">
         <span>EXPLORER</span>
         <div className="explorer-actions">
+          <button
+            className={`icon-btn ${searchOpen ? "active" : ""}`}
+            title="Search in files"
+            onClick={() => {
+              setSearchOpen((o) => {
+                if (o) setQuery(""); // closing → clear the query (back to tree)
+                return !o;
+              });
+            }}
+          >
+            🔍
+          </button>
           <button className="icon-btn" title="New File" onClick={() => setDialog({ kind: "new-file" })}>
             📄+
           </button>
@@ -70,9 +117,36 @@ export function FileExplorer() {
         </div>
       </div>
 
-      <div className="tree">
-        {tree ? <TreeNode node={tree} depth={0} /> : <div className="muted">No workspace</div>}
-      </div>
+      {searchOpen && (
+        <div className="search-box">
+          <input
+            type="text"
+            autoFocus
+            placeholder="Search text in files…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setQuery("");
+                setSearchOpen(false);
+              }
+            }}
+          />
+          {query && (
+            <button className="icon-btn" title="Clear" onClick={() => setQuery("")}>
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
+      {searchOpen && query.trim() ? (
+        <SearchResults results={results} searching={searching} onOpen={openHit} />
+      ) : (
+        <div className="tree">
+          {tree ? <TreeNode node={tree} depth={0} /> : <div className="muted">No workspace</div>}
+        </div>
+      )}
 
       {dialog?.kind === "new-file" && (
         <PromptDialog
@@ -102,6 +176,60 @@ export function FileExplorer() {
           onCancel={() => setDialog(null)}
         />
       )}
+    </div>
+  );
+}
+
+/** Project-search results grouped by file; click a hit to open + jump to line. */
+function SearchResults({
+  results,
+  searching,
+  onOpen,
+}: {
+  results: { matches: SearchMatch[]; truncated: boolean } | null;
+  searching: boolean;
+  onOpen: (hit: SearchMatch) => void;
+}) {
+  if (searching && !results) {
+    return <div className="search-results muted">Searching…</div>;
+  }
+  if (!results || results.matches.length === 0) {
+    return <div className="search-results muted">No matches</div>;
+  }
+
+  // Group consecutive matches by file (results arrive sorted by path).
+  const groups: { path: string; hits: SearchMatch[] }[] = [];
+  for (const m of results.matches) {
+    const last = groups[groups.length - 1];
+    if (last && last.path === m.path) last.hits.push(m);
+    else groups.push({ path: m.path, hits: [m] });
+  }
+
+  return (
+    <div className="search-results">
+      <div className="search-count muted">
+        {results.matches.length} match{results.matches.length === 1 ? "" : "es"} in {groups.length} file
+        {groups.length === 1 ? "" : "s"}
+        {results.truncated ? " (showing first 200)" : ""}
+      </div>
+      {groups.map((g) => (
+        <div key={g.path} className="search-group">
+          <div className="search-file" title={g.path}>
+            {g.path}
+          </div>
+          {g.hits.map((hit, i) => (
+            <button
+              key={i}
+              className="search-hit"
+              onClick={() => onOpen(hit)}
+              title={`${g.path}:${hit.line}`}
+            >
+              <span className="search-line">{hit.line}</span>
+              <span className="search-preview">{hit.preview}</span>
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
