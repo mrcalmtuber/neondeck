@@ -663,7 +663,7 @@ function makeMeter(
     paywallMessage: () =>
       store.isDailyThrottled(userId, tier)
         ? "⚡ Usage-based pricing — you've reached your current usage allowance. It refreshes shortly; upgrade to Pro for higher limits."
-        : "You've used your monthly agent tokens. Upgrade to keep building.",
+        : "You've used your monthly Sparks (usage fluctuates). Upgrade to keep building.",
     record: (tokens: number): UsageSnapshot => {
       if (tokens > 0) store.addTokens(userId, tokens * mult);
       const snap = store.snapshot(userId, tier);

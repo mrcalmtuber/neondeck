@@ -1,4 +1,4 @@
-import { formatTokens, getTier } from "@ide/shared";
+import { formatSparks, getTier } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { signOut } from "../lib/firebaseClient";
 
@@ -38,12 +38,12 @@ export function AccountBar() {
       <span className={`tier-badge tier-${cfg.key}`}>{authMode === "dev" ? "Dev" : cfg.name}</span>
 
       {usage && (
-        <div className="usage-meter" title={`${usage.tokensUsed.toLocaleString()} / ${usage.tokensLimit.toLocaleString()} tokens`}>
+        <div className="usage-meter" title={`${formatSparks(usage.tokensUsed)} / ${formatSparks(usage.tokensLimit)} Sparks — usage fluctuates`}>
           <div className="usage-meter-bar">
             <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
           </div>
           <span className="usage-meter-label">
-            {formatTokens(usage.tokensUsed)}/{formatTokens(usage.tokensLimit)}
+            {formatSparks(usage.tokensUsed)}/{formatSparks(usage.tokensLimit)} ✦
           </span>
         </div>
       )}

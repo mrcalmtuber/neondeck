@@ -334,7 +334,7 @@ export async function runAgent(promptId: string, prompt: string, deps: AgentDeps
         type: "error",
         id: promptId,
         message:
-          "The model stopped responding (timed out), so the run was ended to avoid using more tokens. Please try again.",
+          "The model stopped responding (timed out), so the run was ended to avoid using more Sparks. Please try again.",
       });
       send({ type: "agent_done", id: promptId, reason: "stopped" });
     } else if (state.stopRequested) {

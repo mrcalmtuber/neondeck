@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatTokens, type Tier } from "@ide/shared";
+import { formatSparks, type Tier } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
 import { PlanCards } from "./PlanCards";
@@ -84,7 +84,7 @@ export function Paywall() {
             <span style={{ width: `${pct}%` }} />
           </div>
           <div className="paywall-meter-label">
-            {formatTokens(usage.tokensUsed)} / {formatTokens(usage.tokensLimit)} tokens used this month
+            {formatSparks(usage.tokensUsed)} / {formatSparks(usage.tokensLimit)} Sparks used this month · usage fluctuates
           </div>
         </div>
 

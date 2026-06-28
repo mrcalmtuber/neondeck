@@ -40,6 +40,43 @@ export const EFFORT_LABELS: Record<AgentEffort, string> = {
  */
 export const FREE_DAILY_TOKEN_CAP = 1_000_000;
 
+/**
+ * "Sparks" — the user-facing usage unit. 1 Spark = 100k tokens. Everything shown to
+ * users (allowances, the meter, the paywall) is in Sparks; tokens stay internal.
+ */
+export const SPARK_TOKENS = 100_000;
+export function tokensToSparks(tokens: number): number {
+  return tokens / SPARK_TOKENS;
+}
+/** Compact Spark label, e.g. 1_500_000 -> "15", 250_000 -> "2.5". */
+export function formatSparks(tokens: number): string {
+  const s = tokens / SPARK_TOKENS;
+  return s >= 100 ? String(Math.round(s)) : String(Math.round(s * 10) / 10);
+}
+
+/**
+ * Dynamic monthly allowance (INTERNAL — never revealed; the UI only ever says
+ * "usage fluctuates"). Each plan has a generous `soft` allowance that quietly
+ * tightens to `hard` when a user burns more than `burst` tokens in a single day
+ * ("using it like crazy"). Steady users keep the higher limit. Scales by tier.
+ */
+interface DynamicLimit {
+  soft: number;
+  hard: number;
+  burst: number;
+}
+const DYNAMIC_LIMITS: Record<Tier, DynamicLimit> = {
+  0: { soft: 1_500_000, hard: 1_000_000, burst: 300_000 }, // Free: 15 / 10 Sparks, burst 3/day
+  1: { soft: 10_000_000, hard: 7_000_000, burst: 2_000_000 }, // Pro: 100 / 70 Sparks, burst 20/day
+  2: { soft: 30_000_000, hard: 22_000_000, burst: 6_000_000 }, // Max: 300 / 220 Sparks, burst 60/day
+};
+/** The effective monthly token limit for a tier given today's burn (the dynamic
+ *  shift). Tighter when the user is hammering it; generous otherwise. */
+export function dynamicTokenLimit(tier: Tier, tokensUsedToday: number): number {
+  const d = DYNAMIC_LIMITS[tier] ?? DYNAMIC_LIMITS[0];
+  return tokensUsedToday >= d.burst ? d.hard : d.soft;
+}
+
 export interface TierConfig {
   id: Tier;
   key: TierKey;
@@ -94,8 +131,8 @@ export const TIERS: Record<Tier, TierConfig> = {
     name: "Free",
     priceUsd: 0,
     priceLabel: "$0",
-    tokenLimit: 5_000_000, // 5M
-    tokenLabel: "5M",
+    tokenLimit: 1_500_000, // soft allowance (dynamic) — 15 Sparks
+    tokenLabel: "15 Sparks",
     ...FULL_AGENT,
     stripePriceEnv: null,
     canPublish: false,
@@ -103,7 +140,7 @@ export const TIERS: Record<Tier, TierConfig> = {
     perks: [
       "Full cloud dev sandboxes — run real apps",
       "Complete AI agent — every effort level",
-      "5M agent tokens / month",
+      "Up to 15 Sparks / month (usage fluctuates)",
       "All editor, package & database panels",
     ],
   },
@@ -113,15 +150,15 @@ export const TIERS: Record<Tier, TierConfig> = {
     name: "Pro",
     priceUsd: 10,
     priceLabel: "$10",
-    tokenLimit: 10_000_000, // 10M
-    tokenLabel: "10M",
+    tokenLimit: 10_000_000, // soft allowance (dynamic) — 100 Sparks
+    tokenLabel: "100 Sparks",
     ...FULL_AGENT,
     stripePriceEnv: "STRIPE_PRICE_PRO",
     canPublish: true,
     tagline: "Publish & share your apps live.",
     perks: [
       "Everything in Free",
-      "10M agent tokens / month",
+      "Up to 100 Sparks / month (usage fluctuates)",
       "Publish & share public live URLs",
       "Permanent live preview links",
     ],
@@ -132,15 +169,15 @@ export const TIERS: Record<Tier, TierConfig> = {
     name: "Max",
     priceUsd: 20,
     priceLabel: "$20",
-    tokenLimit: 30_000_000, // 30M
-    tokenLabel: "30M",
+    tokenLimit: 30_000_000, // soft allowance (dynamic) — 300 Sparks
+    tokenLabel: "300 Sparks",
     ...FULL_AGENT,
     stripePriceEnv: "STRIPE_PRICE_MAX",
     canPublish: true,
     tagline: "Peak usage for power users.",
     perks: [
       "Everything in Pro",
-      "30M agent tokens / month — highest limits",
+      "Up to 300 Sparks / month — highest limits (usage fluctuates)",
       "Publish & share public live URLs",
       "Priority resources",
     ],

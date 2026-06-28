@@ -61,7 +61,7 @@ export function PlansModal({ onClose }: { onClose: () => void }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal plans-modal glass" onClick={(e) => e.stopPropagation()}>
         <h2>Plans &amp; pricing</h2>
-        <p className="muted">Upgrade unlocks more monthly agent tokens and real daemon execution.</p>
+        <p className="muted">Upgrade unlocks more monthly Sparks and real daemon execution.</p>
         {error && <div className="auth-error">⚠️ {error}</div>}
         <PlanCards
           currentTier={tier}

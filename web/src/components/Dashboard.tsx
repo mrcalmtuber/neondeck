@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { formatTokens, getTier, type Tier } from "@ide/shared";
+import { formatSparks, getTier, type Tier } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { daemon } from "../lib/daemonClient";
 import { listLocalProjects, recordLocalProject, removeLocalProject } from "../lib/projectsLocal";
@@ -416,7 +416,7 @@ function BillingPanel() {
               <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
             </div>
             <span className="muted small">
-              {formatTokens(usage.tokensUsed)} / {formatTokens(usage.tokensLimit)} agent tokens this month
+              {formatSparks(usage.tokensUsed)} / {formatSparks(usage.tokensLimit)} Sparks this month · usage fluctuates
             </span>
           </div>
         )}

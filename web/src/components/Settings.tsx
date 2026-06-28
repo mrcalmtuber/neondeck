@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  formatTokens,
+  formatSparks,
   getTier,
   EFFORT_LEVELS,
   EFFORT_LABELS,
@@ -202,7 +202,7 @@ export function Settings() {
                 <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
               </div>
               <span className="muted small">
-                {formatTokens(usage.tokensUsed)} / {formatTokens(usage.tokensLimit)} agent tokens this month
+                {formatSparks(usage.tokensUsed)} / {formatSparks(usage.tokensLimit)} Sparks this month · usage fluctuates
               </span>
             </div>
           )}
@@ -263,7 +263,7 @@ export function Settings() {
             </div>
             {tokenMultiplierForEffort(tier, effectiveEffort) > 1 && (
               <span className="muted small effort-2x-warn">
-                ⚠ Medium effort burns your tokens 2× as fast on Free.
+                ⚠ Medium effort burns your Sparks 2× as fast on Free.
               </span>
             )}
           </div>

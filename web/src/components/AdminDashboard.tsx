@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  formatTokens,
+  formatSparks,
+  SPARK_TOKENS,
   getTier,
   DEFAULT_MAINTENANCE_MESSAGE,
   type AdminUserInfo,
@@ -229,8 +230,8 @@ function UserCard({ u, onAfter }: { u: AdminUserInfo; onAfter: () => void }) {
           <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
         </div>
         <span className="muted small">
-          {formatTokens(u.tokensUsed)} / {formatTokens(u.tokensLimit)} tokens this month ({pct}%)
-          {u.limitOverride != null ? " · custom limit" : ""}
+          {formatSparks(u.tokensUsed)} / {formatSparks(u.tokensLimit)} Sparks this month ({pct}%)
+          {u.limitOverride != null ? " · custom limit" : " · fluctuates"}
         </span>
       </div>
       <TierUsageControls
@@ -340,11 +341,11 @@ function TierUsageControls({
         ))}
       </div>
       <div className="admin-ctl">
-        <span className="muted small">Usage:</span>
+        <span className="muted small">Usage (Sparks):</span>
         <input
           className="admin-input sm"
-          inputMode="numeric"
-          placeholder="tokens"
+          inputMode="decimal"
+          placeholder="Sparks"
           value={usageInput}
           onChange={(e) => setUsageInput(e.target.value)}
         />
@@ -354,7 +355,7 @@ function TierUsageControls({
           onClick={() => {
             const n = num(usageInput);
             if (n != null) {
-              daemon.adminSetUsage(userId, n);
+              daemon.adminSetUsage(userId, Math.round(n * SPARK_TOKENS));
               setUsageInput("");
               after();
             }
@@ -384,11 +385,11 @@ function TierUsageControls({
         </button>
       </div>
       <div className="admin-ctl">
-        <span className="muted small">Limit:</span>
+        <span className="muted small">Limit (Sparks):</span>
         <input
           className="admin-input sm"
-          inputMode="numeric"
-          placeholder="custom max tokens"
+          inputMode="decimal"
+          placeholder="custom max Sparks"
           value={limitInput}
           onChange={(e) => setLimitInput(e.target.value)}
         />
@@ -398,7 +399,7 @@ function TierUsageControls({
           onClick={() => {
             const n = num(limitInput);
             if (n != null) {
-              daemon.adminSetLimit(userId, n);
+              daemon.adminSetLimit(userId, Math.round(n * SPARK_TOKENS));
               setLimitInput("");
               after();
             }

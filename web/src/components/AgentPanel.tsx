@@ -171,7 +171,7 @@ export function AgentPanel() {
 
       {tokenMultiplierForEffort(tier, effectiveEffort) > 1 && (
         <div className="effort-2x-warn">
-          ⚠ Medium effort doubles token usage — your limit burns 2× as fast.
+          ⚠ Medium effort doubles your Spark usage — your limit burns 2× as fast.
         </div>
       )}
 

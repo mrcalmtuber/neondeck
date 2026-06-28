@@ -238,7 +238,7 @@ export function AuthGateway() {
             <div key={t.key} className="auth-plan">
               <span className="auth-plan-name">{t.name}</span>
               <span className="auth-plan-price">{t.priceLabel}<small>/mo</small></span>
-              <span className="auth-plan-tokens">{t.tokenLabel} tokens</span>
+              <span className="auth-plan-tokens">{t.tokenLabel}</span>
             </div>
           ))}
         </div>

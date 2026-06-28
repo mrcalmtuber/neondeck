@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Firestore } from "firebase-admin/firestore";
-import { getTier, FREE_DAILY_TOKEN_CAP, type Tier, type UsageSnapshot } from "@ide/shared";
+import { getTier, dynamicTokenLimit, FREE_DAILY_TOKEN_CAP, type Tier, type UsageSnapshot } from "@ide/shared";
 
 /**
  * A per-call metering handle handed to the agent / inline-AI so they can charge
@@ -257,10 +257,12 @@ export class UsageStore {
     this.save(userId);
   }
 
-  /** Effective monthly limit: the admin override if set, else the tier default. */
+  /** Effective monthly limit: the admin override if set, else the DYNAMIC limit
+   *  (generous when used steadily, tighter under heavy daily bursts). */
   effectiveLimit(userId: string, tier: Tier): number {
     const override = this.data.accounts[userId]?.limitOverride;
-    return override == null ? getTier(tier).tokenLimit : override;
+    if (override != null) return override;
+    return dynamicTokenLimit(tier, this.tokensUsedToday(userId));
   }
 
   /** Every user active since `sinceMs` (by the doc's `updatedAt`), for the admin
@@ -280,11 +282,18 @@ export class UsageStore {
     }>
   > {
     const period = currentPeriod();
-    const build = (userId: string, account: Account | undefined, monthly: Record<string, number> | undefined) => {
+    const day = currentDay();
+    const build = (
+      userId: string,
+      account: Account | undefined,
+      monthly: Record<string, number> | undefined,
+      daily: Record<string, number> | undefined,
+    ) => {
       const tier = (account?.tier ?? 0) as Tier;
       const limitOverride = account?.limitOverride ?? null;
       const tokensUsed = monthly?.[period] ?? 0;
-      const tokensLimit = limitOverride == null ? getTier(tier).tokenLimit : limitOverride;
+      const tokensLimit =
+        limitOverride == null ? dynamicTokenLimit(tier, daily?.[day] ?? 0) : limitOverride;
       return {
         userId,
         tier,
@@ -304,8 +313,12 @@ export class UsageStore {
           .limit(500)
           .get();
         return snap.docs.map((d) => {
-          const data = d.data() as { account?: Account; monthly?: Record<string, number> };
-          return build(d.id, data.account, data.monthly);
+          const data = d.data() as {
+            account?: Account;
+            monthly?: Record<string, number>;
+            daily?: Record<string, number>;
+          };
+          return build(d.id, data.account, data.monthly, data.daily);
         });
       } catch (err) {
         console.warn("[usage] listRecentUsers failed:", (err as Error).message);
@@ -313,7 +326,7 @@ export class UsageStore {
       }
     }
     return Object.keys(this.data.accounts).map((userId) =>
-      build(userId, this.data.accounts[userId], this.data.usage[userId]),
+      build(userId, this.data.accounts[userId], this.data.usage[userId], this.data.usageDaily[userId]),
     );
   }
 
