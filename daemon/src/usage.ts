@@ -38,6 +38,9 @@ interface Account {
   stripeSubscriptionId?: string;
   /** Admin-set custom monthly token limit; overrides the tier default when set. */
   limitOverride?: number | null;
+  /** Admin suspension: when true the user is locked out with `suspendMessage`. */
+  suspended?: boolean;
+  suspendMessage?: string;
 }
 
 interface Ledger {
@@ -236,6 +239,24 @@ export class UsageStore {
     this.save(userId);
   }
 
+  /** Whether a user is currently suspended (locked out). */
+  isSuspended(userId: string): boolean {
+    return this.data.accounts[userId]?.suspended === true;
+  }
+
+  /** The custom suspension message shown to a locked-out user. */
+  suspendMessageFor(userId: string): string {
+    return this.data.accounts[userId]?.suspendMessage ?? "";
+  }
+
+  /** Admin: suspend / un-suspend a user with an optional custom message. */
+  setSuspended(userId: string, on: boolean, message: string): void {
+    const acct = (this.data.accounts[userId] ??= { tier: 0 });
+    acct.suspended = on;
+    acct.suspendMessage = on ? message : "";
+    this.save(userId);
+  }
+
   /** Effective monthly limit: the admin override if set, else the tier default. */
   effectiveLimit(userId: string, tier: Tier): number {
     const override = this.data.accounts[userId]?.limitOverride;
@@ -248,7 +269,15 @@ export class UsageStore {
   async listRecentUsers(
     sinceMs: number,
   ): Promise<
-    Array<{ userId: string; tier: Tier; tokensUsed: number; tokensLimit: number; limitOverride: number | null }>
+    Array<{
+      userId: string;
+      tier: Tier;
+      tokensUsed: number;
+      tokensLimit: number;
+      limitOverride: number | null;
+      suspended: boolean;
+      suspendMessage: string;
+    }>
   > {
     const period = currentPeriod();
     const build = (userId: string, account: Account | undefined, monthly: Record<string, number> | undefined) => {
@@ -256,7 +285,15 @@ export class UsageStore {
       const limitOverride = account?.limitOverride ?? null;
       const tokensUsed = monthly?.[period] ?? 0;
       const tokensLimit = limitOverride == null ? getTier(tier).tokenLimit : limitOverride;
-      return { userId, tier, tokensUsed, tokensLimit, limitOverride };
+      return {
+        userId,
+        tier,
+        tokensUsed,
+        tokensLimit,
+        limitOverride,
+        suspended: account?.suspended === true,
+        suspendMessage: account?.suspendMessage ?? "",
+      };
     };
     if (this.fs) {
       try {

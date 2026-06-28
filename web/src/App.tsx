@@ -9,6 +9,7 @@ import { Paywall } from "./components/Paywall";
 import { SubscriptionModal } from "./components/SubscriptionModal";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { MaintenanceOverlay } from "./components/MaintenanceOverlay";
+import { SuspendedOverlay } from "./components/SuspendedOverlay";
 import { daemon } from "./lib/daemonClient";
 import { attachToRun } from "./lib/agent";
 import { saveChat } from "./lib/chatHistory";
@@ -189,6 +190,8 @@ export function App() {
         useStore.getState().setMaintenance(m.maintenance);
       } else if (m.type === "maintenance_changed") {
         useStore.getState().setMaintenance(m.maintenance);
+      } else if (m.type === "suspension_changed") {
+        useStore.getState().setSuspension(m.suspended, m.message);
       } else if (m.type === "notice") {
         useStore.getState().setNotice({ level: m.level, text: m.text });
       }
@@ -278,6 +281,7 @@ export function App() {
       <SubscriptionModal />
       {/* MAINTENANCE (temporary — remove later) */}
       <MaintenanceOverlay />
+      <SuspendedOverlay />
       {notice && (
         <div
           className={`notice-toast ${notice.level}`}

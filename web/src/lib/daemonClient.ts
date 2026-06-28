@@ -69,6 +69,8 @@ export interface HelloInfo {
   billingEnabled: boolean;
   isAdmin: boolean;
   maintenance: MaintenanceState;
+  suspended: boolean;
+  suspendMessage: string;
   /** Present when this connection reattached to a still-running agent (e.g. after a
    *  full reload) — the client uses it to restore the live run's UI. */
   activeRun?: { promptId: string; project: string } | null;
@@ -105,6 +107,8 @@ export class DaemonClient {
     billingEnabled: false,
     isAdmin: false,
     maintenance: { on: false, message: "" },
+    suspended: false,
+    suspendMessage: "",
   };
 
   // ---- auto-reconnect (precaution for flaky/mobile networks) ----
@@ -246,6 +250,8 @@ export class DaemonClient {
               billingEnabled: hello.billingEnabled,
               isAdmin: hello.isAdmin,
               maintenance: hello.maintenance,
+              suspended: hello.suspended,
+              suspendMessage: hello.suspendMessage,
               activeRun: hello.activeRun ?? null,
             };
             this.handshakeOk = true;
@@ -450,6 +456,10 @@ export class DaemonClient {
     const res = await this.request({ type: "admin_list_users", id: nextId(), sinceMs });
     if (res.type !== "admin_users") throw new Error("Unexpected list response");
     return res.users;
+  }
+  /** Suspend / un-suspend ANY user (locks them out with a custom message). */
+  adminSetSuspended(userId: string, suspended: boolean, message: string): void {
+    this.send({ type: "admin_set_suspended", id: nextId(), userId, suspended, message });
   }
 
   // -------- Hub / projects --------

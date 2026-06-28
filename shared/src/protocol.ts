@@ -276,6 +276,15 @@ export interface AdminListUsersRequest {
   id: string;
   sinceMs?: number;
 }
+/** Admin: suspend / un-suspend ANY user (durable). A suspended user is locked out
+ *  with a "you have been suspended" screen + the optional custom message. */
+export interface AdminSetSuspendedRequest {
+  type: "admin_set_suspended";
+  id: string;
+  userId: string;
+  suspended: boolean;
+  message: string;
+}
 
 // Feature A — inline AI
 export interface AiExplainRequest {
@@ -415,7 +424,8 @@ export type ClientMessage =
   | AdminSetUsageRequest
   | AdminSetLimitRequest
   | AdminLookupUserRequest
-  | AdminListUsersRequest;
+  | AdminListUsersRequest
+  | AdminSetSuspendedRequest;
 
 // ---------------------------------------------------------------------------
 // Daemon -> Browser
@@ -462,6 +472,9 @@ export interface AdminUserInfo {
   tokensLimit: number;
   limitOverride: number | null;
   online: boolean;
+  /** Suspension state + the custom message shown to the locked-out user. */
+  suspended: boolean;
+  suspendMessage: string;
 }
 
 export interface HelloResponse {
@@ -487,6 +500,9 @@ export interface HelloResponse {
   /** Set when this connection reattached to an agent run that survived a brief drop,
    *  so the client can restore the live run's UI (project + chat + stream). */
   activeRun?: { promptId: string; project: string } | null;
+  /** Per-user suspension: when true this user is locked out with a suspended screen. */
+  suspended: boolean;
+  suspendMessage: string;
 }
 
 export interface ProjectsResponse {
@@ -709,6 +725,13 @@ export interface MaintenanceChangedMessage {
   id: string; // "broadcast"
   maintenance: MaintenanceState;
 }
+/** Pushed to a user's sessions when an admin suspends / un-suspends them (live). */
+export interface SuspensionChangedMessage {
+  type: "suspension_changed";
+  id: string; // "broadcast"
+  suspended: boolean;
+  message: string;
+}
 /** Reply to admin_lookup_user — the matched user (or null if no such email). */
 export interface AdminUserMessage {
   type: "admin_user";
@@ -766,4 +789,5 @@ export type ServerMessage =
   | AdminUserMessage
   | AdminUsersMessage
   | MaintenanceChangedMessage
+  | SuspensionChangedMessage
   | NoticeMessage;

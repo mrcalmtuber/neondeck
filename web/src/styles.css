@@ -3570,6 +3570,17 @@ body { transition: background-color 0.3s var(--ease), color 0.3s var(--ease); }
 .admin-controls { display: flex; flex-direction: column; gap: 8px; }
 .admin-ctl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .admin-input.sm { flex: 0 1 130px; padding: 5px 8px; font-size: 12px; }
+.admin-input.sm.wide { flex: 1 1 220px; }
+.admin-card.suspended { border-color: color-mix(in srgb, var(--accent2) 60%, transparent); }
+.admin-suspend { margin-top: 2px; }
+.suspended-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent2, #ff007f);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
 .btn-ghost.xs, .btn-danger.xs {
   padding: 3px 9px;
   font-size: 12px;

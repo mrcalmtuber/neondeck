@@ -76,6 +76,8 @@ export interface HelloInfoState {
   billingEnabled: boolean;
   isAdmin: boolean;
   maintenance: MaintenanceState;
+  suspended: boolean;
+  suspendMessage: string;
 }
 
 interface AppState {
@@ -121,6 +123,10 @@ interface AppState {
   /** MAINTENANCE (temporary — remove later): current lockout state. */
   maintenance: MaintenanceState;
   setMaintenance: (m: MaintenanceState) => void;
+  /** Per-user suspension (this signed-in user). When true, show the suspended screen. */
+  suspended: boolean;
+  suspendMessage: string;
+  setSuspension: (suspended: boolean, message: string) => void;
   /** Live session list for the admin dashboard (from admin_state pushes). */
   adminSessions: AdminSessionInfo[];
   setAdminSessions: (s: AdminSessionInfo[]) => void;
@@ -276,6 +282,9 @@ export const useStore = create<AppState>((set, get) => ({
   isAdmin: false,
   maintenance: { on: false, message: "" },
   setMaintenance: (maintenance) => set({ maintenance }),
+  suspended: false,
+  suspendMessage: "",
+  setSuspension: (suspended, suspendMessage) => set({ suspended, suspendMessage }),
   adminSessions: [],
   setAdminSessions: (adminSessions) => set({ adminSessions }),
   notice: null,

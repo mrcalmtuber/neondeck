@@ -728,6 +728,8 @@ async function handleMessage(
           billingEnabled: billingEnabled(config),
           isAdmin: older.isAdmin,
           maintenance,
+          suspended: store.isSuspended(older.userId!),
+          suspendMessage: store.suspendMessageFor(older.userId!),
           // If a run is still in flight, tell the client so it can restore the live
           // UI after a full reload (where its in-memory state was wiped).
           activeRun:
@@ -777,6 +779,8 @@ async function handleMessage(
         billingEnabled: billingEnabled(config),
         isAdmin: session.isAdmin,
         maintenance,
+        suspended: store.isSuspended(user.userId),
+        suspendMessage: store.suspendMessageFor(user.userId),
       });
       broadcastAdminState(); // a (re)identified session — refresh the ops dashboard
 
@@ -1019,6 +1023,16 @@ async function handleMessage(
         });
         return send({ type: "agent_done", id: msg.id, reason: "stopped" });
       }
+      // Suspended users are locked out (the client also shows a full-screen screen).
+      if (session.userId && !session.isAdmin && store.isSuspended(session.userId)) {
+        send({
+          type: "notice",
+          id: msg.id,
+          level: "warn",
+          text: store.suspendMessageFor(session.userId) || "Your account has been suspended.",
+        });
+        return send({ type: "agent_done", id: msg.id, reason: "stopped" });
+      }
       const wsDir = requireWs(session);
       // Free MAY use the agent (reasoning + file edits) but NOT run shell commands —
       // code execution stays Pro+. The hidden Free daily cap is enforced by the meter.
@@ -1118,6 +1132,21 @@ async function handleMessage(
       broadcastAdminState();
       return;
     }
+    case "admin_set_suspended": {
+      if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
+      if (!msg.userId) return;
+      await store.ensureLoaded(msg.userId);
+      store.setSuspended(msg.userId, msg.suspended, msg.message);
+      await store.flush(); // persist immediately
+      // Lock out the target live (every one of their connected sessions).
+      for (const s of activeSessions) {
+        if (s.userId !== msg.userId) continue;
+        s.send({ type: "suspension_changed", id: "broadcast", suspended: msg.suspended, message: msg.message });
+        if (msg.suspended) s.agent.abort?.abort(); // stop any in-flight run
+      }
+      broadcastAdminState();
+      return;
+    }
     case "admin_lookup_user": {
       if (!session.isAdmin) return send({ type: "error", id: msg.id, message: "Not authorized." });
       const found = await lookupUserByEmail(msg.email);
@@ -1136,6 +1165,8 @@ async function handleMessage(
           tokensLimit: snap.tokensLimit,
           limitOverride: store.limitOverride(found.userId),
           online: [...activeSessions].some((s) => s.userId === found.userId),
+          suspended: store.isSuspended(found.userId),
+          suspendMessage: store.suspendMessageFor(found.userId),
         },
       });
     }
@@ -1160,6 +1191,8 @@ async function handleMessage(
           tokensUsed: snap.tokensUsed,
           tokensLimit: snap.tokensLimit,
           limitOverride: store.limitOverride(s.userId),
+          suspended: store.isSuspended(s.userId),
+          suspendMessage: store.suspendMessageFor(s.userId),
         });
       }
       const uids = [...byId.keys()];
@@ -1174,6 +1207,8 @@ async function handleMessage(
           tokensLimit: r.tokensLimit,
           limitOverride: r.limitOverride,
           online: online.has(uid),
+          suspended: r.suspended,
+          suspendMessage: r.suspendMessage,
         };
       });
       users.sort((a, b) => Number(b.online) - Number(a.online) || b.tokensUsed - a.tokensUsed);

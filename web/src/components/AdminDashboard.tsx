@@ -209,16 +209,17 @@ function AllUsersPanel() {
   );
 }
 
-/** One user row: plan + usage at a glance, with tier / usage / limit controls. */
+/** One user row: plan + usage at a glance, with tier / usage / limit + suspend controls. */
 function UserCard({ u, onAfter }: { u: AdminUserInfo; onAfter: () => void }) {
   const pct = u.tokensLimit > 0 ? Math.min(100, Math.round((u.tokensUsed / u.tokensLimit) * 100)) : 0;
   return (
-    <div className="admin-card">
+    <div className={`admin-card ${u.suspended ? "suspended" : ""}`}>
       <div className="admin-card-head">
         <span className="admin-email">{u.email ?? u.userId}</span>
         <span className={`tier-badge tier-${getTier(u.tier as Tier).key}`}>
           {getTier(u.tier as Tier).name}
         </span>
+        {u.suspended && <span className="suspended-badge">🚫 Suspended</span>}
         <span className="muted small" style={{ marginLeft: "auto" }}>
           {u.online ? "● online" : "○ offline"}
         </span>
@@ -239,6 +240,60 @@ function UserCard({ u, onAfter }: { u: AdminUserInfo; onAfter: () => void }) {
         limitOverride={u.limitOverride}
         onAfter={onAfter}
       />
+      <SuspendControl
+        userId={u.userId}
+        suspended={u.suspended}
+        suspendMessage={u.suspendMessage}
+        onAfter={onAfter}
+      />
+    </div>
+  );
+}
+
+/** Suspend / un-suspend a user with a custom lockout message. */
+function SuspendControl({
+  userId,
+  suspended,
+  suspendMessage,
+  onAfter,
+}: {
+  userId: string;
+  suspended: boolean;
+  suspendMessage: string;
+  onAfter: () => void;
+}) {
+  const [message, setMessage] = useState(suspendMessage);
+  const after = () => setTimeout(onAfter, 350);
+  return (
+    <div className="admin-ctl admin-suspend">
+      <span className="muted small">Suspend:</span>
+      <input
+        className="admin-input sm wide"
+        placeholder="Custom message shown to the user (optional)"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+      />
+      {suspended ? (
+        <button
+          className="btn-ghost xs"
+          onClick={() => {
+            daemon.adminSetSuspended(userId, false, "");
+            after();
+          }}
+        >
+          Un-suspend
+        </button>
+      ) : (
+        <button
+          className="btn-danger xs"
+          onClick={() => {
+            daemon.adminSetSuspended(userId, true, message.trim());
+            after();
+          }}
+        >
+          Suspend
+        </button>
+      )}
     </div>
   );
 }
