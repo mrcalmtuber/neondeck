@@ -10,6 +10,7 @@ import {
   clampEffortForTier,
   effortAllowedForTier,
   tokenMultiplierForEffort,
+  isNearLimit,
   type AgentEffort,
   type Tier,
 } from "@ide/shared";
@@ -41,6 +42,7 @@ export function AgentPanel() {
   const pendingApproval = useStore((s) => s.pendingApproval);
   const session = useStore((s) => s.session);
   const connError = useStore((s) => s.connError);
+  const usage = useStore((s) => s.usage);
   const tier = (useStore((s) => s.usage?.tier) ?? 0) as Tier;
   const agentEffort = useStore((s) => s.agentEffort);
   const setAgentEffort = useStore((s) => s.setAgentEffort);
@@ -49,11 +51,16 @@ export function AgentPanel() {
   const clearActiveChat = useStore((s) => s.clearActiveChat);
   const [input, setInput] = useState("");
   const [effortOpen, setEffortOpen] = useState(false);
+  const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Shown effort = the user's pick (or tier default), clamped to the tier ceiling
   // so a stale "high" after a downgrade self-corrects to medium.
   const effectiveEffort = clampEffortForTier(tier, agentEffort ?? effortForTier(tier));
+
+  // Near the (hidden, dynamic) limit → nudge a lower effort to stretch Sparks,
+  // instead of revealing how little is left. Dismissible until reload.
+  const nearLimit = !!usage && isNearLimit(usage.tokensUsed, usage.tokensLimit);
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
@@ -166,6 +173,31 @@ export function AgentPanel() {
         <div className="status-ticker">
           <span className="spinner" />
           <span>{agentStatus || "Working…"}</span>
+        </div>
+      )}
+
+      {nearLimit && !nudgeDismissed && (
+        <div className="near-limit-nudge">
+          <span>
+            ⚡ You're nearing your limit — want to switch effort levels? Lower effort stretches your
+            Sparks further.
+          </span>
+          <div className="near-limit-actions">
+            {effectiveEffort !== "low" && (
+              <button
+                className="btn-ghost sm"
+                onClick={() => {
+                  setAgentEffort("low");
+                  setNudgeDismissed(true);
+                }}
+              >
+                Use Low effort
+              </button>
+            )}
+            <button className="near-limit-x" onClick={() => setNudgeDismissed(true)} title="Dismiss">
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

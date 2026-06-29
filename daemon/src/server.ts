@@ -19,7 +19,7 @@ import { watchWorkspace, type Watcher } from "./watcher.js";
 import { createProxyRouter, PREVIEW_PREFIX, type ProxyRouter } from "./proxy.js";
 import { makeWebHandler } from "./webStatic.js";
 import { runAgent, newAgentState, type AgentState } from "./agent.js";
-import { listProjects, createProject, resolveProject, projectInfo, projectExists } from "./projects.js";
+import { listProjects, createProject, deleteProject, resolveProject, projectInfo, projectExists } from "./projects.js";
 import { gitLog, gitPublish } from "./git.js";
 import { explain, fix } from "./ai.js";
 import { ProcRegistry, sampleRam } from "./procs.js";
@@ -37,7 +37,14 @@ import {
 } from "./db.js";
 import { openTunnel, type TunnelHandle } from "./tunnel.js";
 import { authenticate, authConfigured, userRoot, userStorageKey, type AuthMode } from "./auth.js";
-import { pushProject, pullProject, listRemoteProjects } from "./githubSync.js";
+import { pushProject, pullProject, listRemoteProjects, removeRemoteProject } from "./githubSync.js";
+import {
+  snapshotEnabled,
+  snapshotProject,
+  restoreProject,
+  listSnapshotProjects,
+  deleteSnapshot,
+} from "./firestoreFs.js";
 import { UsageStore, type Meter } from "./usage.js";
 import { initFirestore, lookupUserByEmail, lookupEmails } from "./firebaseAdmin.js";
 import { billingEnabled, realStripeConfigured, reconcileTierFromStripe } from "./billing.js";
@@ -49,6 +56,7 @@ import {
   effortForTier,
   clampEffortForTier,
   tokenMultiplierForEffort,
+  maxProjectsForTier,
   DEFAULT_MAINTENANCE_MESSAGE,
   type Tier,
   type AgentEffort,
@@ -137,13 +145,10 @@ export async function startServer(config: DaemonConfig): Promise<WebSocketServer
     console.log("[maintenance] booting in maintenance mode (MAINTENANCE_MODE set)");
   }
 
-  // Persist any buffered usage on a graceful shutdown (Render sends SIGTERM on
-  // redeploy) so the last few seconds of metering aren't lost.
-  const flushAndExit = () => {
-    void store.flush().finally(() => process.exit(0));
-  };
-  process.once("SIGTERM", flushAndExit);
-  process.once("SIGINT", flushAndExit);
+  // Graceful shutdown (usage flush + project flush) is owned by index.ts so both
+  // complete before the process exits — see flushUsage() / flushAllSessions().
+  // (Previously a separate handler here could process.exit() the moment the small
+  // usage flush settled, truncating the longer project-snapshot flush on redeploy.)
 
   // Optional: serve the built web SPA on this port too, so a single service hosts
   // web + API + WS + previews. Null in local dev (Vite serves the web on :5173).
@@ -590,35 +595,74 @@ function sessionStorageKey(session: Session): string {
   return userStorageKey({ userId: session.userId ?? "anon", email: null, mode: session.authMode });
 }
 
-/** Debounced push of the active project to the user's GitHub. No-op without a
- *  token / open project, or inside the post-restore quiet window. */
+/** Whether this session persists durably and via which path. GitHub (when the
+ *  user connected it) is preferred; otherwise the Firestore snapshot store is the
+ *  free "persistent disk" safety net. */
+function canPersist(session: Session, config: DaemonConfig): boolean {
+  return Boolean(session.githubToken) || snapshotEnabled(config);
+}
+
+/** Persist the active project once — GitHub if connected, else a Firestore
+ *  snapshot. Used by both the debounced and immediate flush paths. Never throws. */
+async function persistActiveProject(session: Session, config: DaemonConfig): Promise<void> {
+  if (!session.activeProject || !session.workspaceDir) return;
+  const key = sessionStorageKey(session);
+  if (session.githubToken) {
+    await pushProject(config, session.githubToken, key, session.activeProject, session.workspaceDir);
+  } else if (snapshotEnabled(config)) {
+    await snapshotProject(config, key, session.activeProject, session.workspaceDir);
+  }
+}
+
+/** Debounced persist of the active project. No-op without a durable path / open
+ *  project, or inside the post-restore quiet window. */
 function scheduleSync(session: Session, config: DaemonConfig): void {
-  if (!session.githubToken || !session.activeProject || !session.workspaceDir) return;
+  if (!canPersist(session, config) || !session.activeProject || !session.workspaceDir) return;
   if (Date.now() < session.suppressSyncUntil) return;
   if (session.syncTimer) clearTimeout(session.syncTimer);
-  const { githubToken, activeProject, workspaceDir } = session;
-  const key = sessionStorageKey(session);
   session.syncTimer = setTimeout(() => {
     session.syncTimer = null;
-    void pushProject(config, githubToken, key, activeProject, workspaceDir);
+    void persistActiveProject(session, config);
   }, SYNC_DEBOUNCE_MS);
 }
 
-/** Immediately push the active project (cancelling any pending debounce). Used on
- *  project switch, disconnect, and shutdown. Never throws. */
+/** Immediately persist the active project (cancelling any pending debounce). Used
+ *  on project switch, disconnect, and shutdown. Never throws. */
 async function flushSync(session: Session, config: DaemonConfig): Promise<void> {
   if (session.syncTimer) {
     clearTimeout(session.syncTimer);
     session.syncTimer = null;
   }
-  if (!session.githubToken || !session.activeProject || !session.workspaceDir) return;
-  await pushProject(config, session.githubToken, sessionStorageKey(session), session.activeProject, session.workspaceDir);
+  await persistActiveProject(session, config);
 }
 
 /** Flush every connected session — called on SIGTERM so a redeploy doesn't lose
  *  the latest edits. Best-effort. */
 export async function flushAllSessions(config: DaemonConfig): Promise<void> {
   await Promise.allSettled([...activeSessions].map((s) => flushSync(s, config)));
+}
+
+/** Persist buffered usage metering on shutdown (so the last few seconds aren't
+ *  lost). Called by index.ts alongside flushAllSessions before the process exits. */
+export async function flushUsage(): Promise<void> {
+  if (usageStore) await usageStore.flush();
+}
+
+/** The user's effective project NAMES — local dirs unioned with their durable
+ *  copies (GitHub repo, or Firestore snapshots when GitHub isn't connected). Used
+ *  by list_projects and the per-tier creation cap so a diskless wipe can't be used
+ *  to slip past the limit. */
+async function effectiveProjectNames(session: Session, config: DaemonConfig): Promise<Set<string>> {
+  const root = requireProjectRoot(session);
+  const names = new Set(listProjects(root).map((p) => p.name));
+  const key = sessionStorageKey(session);
+  const remote = session.githubToken
+    ? await listRemoteProjects(config, session.githubToken, key)
+    : snapshotEnabled(config)
+      ? await listSnapshotProjects(config, key)
+      : [];
+  for (const n of remote) names.add(n);
+  return names;
 }
 
 /** The caller's effective tier (dev mode forced to the configured dev tier). */
@@ -807,20 +851,38 @@ async function handleMessage(
     case "list_projects": {
       const root = requireProjectRoot(session);
       const projects = listProjects(root);
-      // After a diskless wipe the local dir is empty but the user's GitHub still
+      // After a diskless wipe the local dir is empty but the user's durable copy
+      // (GitHub repo, or Firestore snapshots when GitHub isn't connected) still
       // has their projects — surface those names too (restored on open). 0 mtime
       // sorts them after live local ones.
-      if (session.githubToken) {
-        const have = new Set(projects.map((p) => p.name));
-        for (const name of await listRemoteProjects(config, session.githubToken, sessionStorageKey(session))) {
-          if (!have.has(name)) projects.push({ name, lastModifiedMs: 0, entryCount: 0 });
-        }
+      const have = new Set(projects.map((p) => p.name));
+      const key = sessionStorageKey(session);
+      const remote = session.githubToken
+        ? await listRemoteProjects(config, session.githubToken, key)
+        : snapshotEnabled(config)
+          ? await listSnapshotProjects(config, key)
+          : [];
+      for (const name of remote) {
+        if (!have.has(name)) projects.push({ name, lastModifiedMs: 0, entryCount: 0 });
       }
       return send({ type: "projects", id: msg.id, projects });
     }
 
     case "create_project": {
       const root = requireProjectRoot(session);
+      // Per-tier project SLOT cap. Count the user's EFFECTIVE projects (local +
+      // durable) so a diskless wipe can't be used to exceed it; creating a name
+      // that already exists isn't a new slot (createProject rejects dupes anyway).
+      const tier = currentTier(session, config, store);
+      const max = maxProjectsForTier(tier);
+      const existing = await effectiveProjectNames(session, config);
+      if (!existing.has(msg.name) && existing.size >= max) {
+        return send({
+          type: "error",
+          id: msg.id,
+          message: `🔒 Your ${getTier(tier).name} plan allows up to ${max} projects. Delete one to make room, or upgrade for more.`,
+        });
+      }
       const { dir, init } = createProject(root, msg.name, msg.blueprint);
       send({
         type: "project_created",
@@ -845,8 +907,11 @@ async function handleMessage(
       // return a precise PROJECT_NOT_FOUND (prefixed so the client prunes its index).
       let justRestored = false;
       if (!projectExists(root, msg.name)) {
+        const key = sessionStorageKey(session);
         if (session.githubToken) {
-          justRestored = await pullProject(config, session.githubToken, sessionStorageKey(session), msg.name, dir);
+          justRestored = await pullProject(config, session.githubToken, key, msg.name, dir);
+        } else if (snapshotEnabled(config)) {
+          justRestored = await restoreProject(config, key, msg.name, dir);
         }
         if (!justRestored) {
           return send({
@@ -878,7 +943,7 @@ async function handleMessage(
       session.watcher?.close();
       session.watcher = watchWorkspace(dir, (root) => {
         send({ type: "workspace_changed", id: "broadcast", root });
-        scheduleSync(session, config); // debounced push of this project to GitHub
+        scheduleSync(session, config); // debounced persist (GitHub or Firestore)
       });
       return send({
         type: "project_opened",
@@ -886,6 +951,39 @@ async function handleMessage(
         workspaceName: msg.name,
         root: await buildTree(dir),
       });
+    }
+
+    case "delete_project": {
+      const root = requireProjectRoot(session);
+      const key = sessionStorageKey(session);
+      // If we're deleting the currently-open project, tear it down first so the
+      // watcher/preview/db don't keep touching (or re-persisting) a dir we remove.
+      if (session.activeProject === msg.name) {
+        if (session.syncTimer) {
+          clearTimeout(session.syncTimer);
+          session.syncTimer = null;
+        }
+        stopPreview(session, proxy);
+        session.watcher?.close();
+        session.watcher = null;
+        try {
+          session.db?.close();
+        } catch {
+          /* ignore */
+        }
+        session.db = null;
+        session.activeProject = null;
+        session.workspaceDir = null;
+      }
+      deleteProject(root, msg.name); // local dir (validated + jailed)
+      // Remove the durable copy too, so the slot is genuinely freed and the
+      // project doesn't reappear in list_projects after a diskless wipe.
+      if (session.githubToken) {
+        await removeRemoteProject(config, session.githubToken, key, msg.name);
+      } else if (snapshotEnabled(config)) {
+        await deleteSnapshot(config, key, msg.name);
+      }
+      return send({ type: "project_deleted", id: msg.id, name: msg.name });
     }
 
     case "set_runtime": {

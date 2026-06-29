@@ -55,6 +55,27 @@ export function formatSparks(tokens: number): string {
 }
 
 /**
+ * Fraction of the (hidden, dynamic) allowance at which the UI stops showing the
+ * exact remaining count and instead nudges the user toward a lower effort level.
+ * Kept vague on purpose — we never reveal the real limit ("usage fluctuates").
+ */
+export const NEAR_LIMIT_PCT = 0.8;
+/** True when usage is close to — but not yet at — the limit (the nudge window). */
+export function isNearLimit(used: number, limit: number): boolean {
+  return limit > 0 && used / limit >= NEAR_LIMIT_PCT && used < limit;
+}
+
+/**
+ * Per-tier project SLOT cap — the number of projects a user may keep at once
+ * (Free 5 / Pro 10 / Max 15). Hitting the cap blocks new creation until one is
+ * deleted (delete to make room) or the user upgrades. Not a lifetime counter.
+ */
+export const PROJECT_LIMITS: Record<Tier, number> = { 0: 5, 1: 10, 2: 15 };
+export function maxProjectsForTier(tier: Tier): number {
+  return PROJECT_LIMITS[tier] ?? PROJECT_LIMITS[0];
+}
+
+/**
  * Dynamic monthly allowance (INTERNAL — never revealed; the UI only ever says
  * "usage fluctuates"). Each plan has a generous `soft` allowance that quietly
  * tightens to `hard` when a user burns more than `burst` tokens in a single day

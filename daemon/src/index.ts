@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
-import { startServer, flushAllSessions } from "./server.js";
+import { startServer, flushAllSessions, flushUsage } from "./server.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -58,8 +58,10 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\n[daemon] shutting down…");
-    // Push every open project to GitHub before the (diskless) box goes away.
-    await flushAllSessions(config).catch(() => {});
+    // Persist BOTH the latest project edits (GitHub or Firestore snapshot) and the
+    // buffered usage metering before the (diskless) box goes away. Awaiting both
+    // here is the single source of exit, so neither flush gets truncated.
+    await Promise.allSettled([flushAllSessions(config), flushUsage()]);
     wss.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref(); // never hang on lingering sockets
   };

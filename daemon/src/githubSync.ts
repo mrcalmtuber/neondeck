@@ -157,6 +157,29 @@ export async function pullProject(
   }
 }
 
+/** Remove a project from the user's GitHub repo so a deleted slot is truly freed
+ *  (otherwise it reappears in listRemoteProjects on the next open). Best-effort. */
+export async function removeRemoteProject(
+  config: DaemonConfig,
+  token: string,
+  userKey: string,
+  project: string,
+): Promise<void> {
+  if (!token) return;
+  try {
+    const { dir, login } = await ensureClone(config, token, userKey);
+    const dest = path.join(dir, project);
+    if (!fs.existsSync(dest)) return;
+    fs.rmSync(dest, { recursive: true, force: true });
+    await git(dir, ["add", "-A"]);
+    await git(dir, ["commit", "-m", `Delete ${project}`]); // "nothing to commit" is fine
+    const push = await git(dir, ["push", tokenUrl(token, login), "HEAD:main"]);
+    if (push.code !== 0) console.warn(`[github] delete of "${project}" push failed: ${push.out.slice(0, 160)}`);
+  } catch (err) {
+    console.warn(`[github] delete of "${project}" failed:`, (err as Error).message);
+  }
+}
+
 /** Project names this user has in their GitHub repo. Used to repopulate the Hub. */
 export async function listRemoteProjects(
   config: DaemonConfig,

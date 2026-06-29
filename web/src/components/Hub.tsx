@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Blueprint, ProjectInfo } from "@ide/shared";
+import { type Blueprint, type ProjectInfo, type Tier, getTier, maxProjectsForTier } from "@ide/shared";
 import { daemon } from "../lib/daemonClient";
 import { useStore } from "../lib/store";
 import { PromptDialog } from "./PromptDialog";
@@ -33,12 +33,31 @@ export function Hub() {
   const projects = useStore((s) => s.projects);
   const setProjects = useStore((s) => s.setProjects);
   const projectsRootName = useStore((s) => s.projectsRootName);
+  const tier = (useStore((s) => s.usage?.tier) ?? 0) as Tier;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Per-tier project SLOT cap (Free 5 / Pro 10 / Max 15). At the cap, creation is
+  // blocked client-side (the daemon also enforces it) until one is deleted.
+  const maxProjects = maxProjectsForTier(tier);
+  const atCap = projects.length >= maxProjects;
 
   useEffect(() => {
     daemon.listProjects().then(setProjects).catch(console.error);
   }, [setProjects]);
+
+  async function deleteProject(name: string) {
+    if (!window.confirm(`Delete "${name}"? This permanently removes it and can't be undone.`)) return;
+    setBusy(name);
+    try {
+      await daemon.deleteProject(name);
+      setProjects(await daemon.listProjects());
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function openProject(name: string) {
     setBusy(name);
@@ -71,7 +90,12 @@ export function Hub() {
       <header className="hub-top">
         <span className="brand">{BRAND_LABEL}</span>
         <div className="hub-top-right">
-          <button className="btn-primary" onClick={() => setDialog({ kind: "name", blueprint: "blank", title: "Create Brand New Blank Project" })}>
+          <button
+            className="btn-primary"
+            disabled={atCap}
+            title={atCap ? `You've reached your ${getTier(tier).name} plan's ${maxProjects}-project limit` : undefined}
+            onClick={() => setDialog({ kind: "name", blueprint: "blank", title: "Create Brand New Blank Project" })}
+          >
             ➕ Create Brand New Blank Project
           </button>
           <ThemeMenu />
@@ -81,13 +105,31 @@ export function Hub() {
 
       <div className="hub-body">
         <section className="hub-section">
-          <h2>📁 My Local Projects <span className="muted small">· {projectsRootName || "workspace"}</span></h2>
+          <h2>
+            📁 My Local Projects{" "}
+            <span className="muted small">· {projectsRootName || "workspace"}</span>
+            <span className={`project-slots${atCap ? " full" : ""}`}>
+              {projects.length} / {maxProjects} projects
+            </span>
+          </h2>
+          {atCap && (
+            <p className="cap-note">
+              You've reached your {getTier(tier).name} plan's {maxProjects}-project limit — delete one
+              to make room, or upgrade for more.
+            </p>
+          )}
           {projects.length === 0 ? (
             <p className="muted">No projects yet — spin one up from a blueprint below.</p>
           ) : (
             <div className="card-grid">
               {projects.map((p) => (
-                <ProjectCard key={p.name} project={p} busy={busy === p.name} onOpen={() => openProject(p.name)} />
+                <ProjectCard
+                  key={p.name}
+                  project={p}
+                  busy={busy === p.name}
+                  onOpen={() => openProject(p.name)}
+                  onDelete={() => deleteProject(p.name)}
+                />
               ))}
             </div>
           )}
@@ -100,6 +142,8 @@ export function Hub() {
               <button
                 key={b.blueprint}
                 className="blueprint-card"
+                disabled={atCap}
+                title={atCap ? `Project limit reached (${maxProjects})` : undefined}
                 onClick={() => setDialog({ kind: "name", blueprint: b.blueprint, title: `New ${b.title}` })}
               >
                 <span className="bp-emoji">{b.emoji}</span>
@@ -120,6 +164,8 @@ export function Hub() {
                 <span className="muted small">by {s.author}</span>
                 <button
                   className="btn-ghost sm"
+                  disabled={atCap}
+                  title={atCap ? `Project limit reached (${maxProjects})` : undefined}
                   onClick={() => setDialog({ kind: "name", blueprint: s.blueprint, title: `Clone "${s.title}"` })}
                 >
                   ⬇ Clone
@@ -144,14 +190,35 @@ export function Hub() {
   );
 }
 
-function ProjectCard({ project, busy, onOpen }: { project: ProjectInfo; busy: boolean; onOpen: () => void }) {
+function ProjectCard({
+  project,
+  busy,
+  onOpen,
+  onDelete,
+}: {
+  project: ProjectInfo;
+  busy: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
   return (
-    <button className="project-card" onClick={onOpen} disabled={busy}>
-      <span className="bp-emoji">📦</span>
-      <span className="bp-title">{project.name}</span>
-      <span className="muted small">{project.entryCount} items · {relTime(project.lastModifiedMs)}</span>
-      <span className="open-hint">{busy ? "Opening…" : "Open →"}</span>
-    </button>
+    <div className="project-card-wrap">
+      <button className="project-card" onClick={onOpen} disabled={busy}>
+        <span className="bp-emoji">📦</span>
+        <span className="bp-title">{project.name}</span>
+        <span className="muted small">{project.entryCount} items · {relTime(project.lastModifiedMs)}</span>
+        <span className="open-hint">{busy ? "Opening…" : "Open →"}</span>
+      </button>
+      <button
+        className="project-del"
+        onClick={onDelete}
+        disabled={busy}
+        title="Delete project"
+        aria-label={`Delete ${project.name}`}
+      >
+        🗑
+      </button>
+    </div>
   );
 }
 

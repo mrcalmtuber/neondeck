@@ -1,4 +1,4 @@
-import { formatSparks, getTier } from "@ide/shared";
+import { formatSparks, getTier, isNearLimit } from "@ide/shared";
 import { useStore } from "../lib/store";
 import { signOut } from "../lib/firebaseClient";
 
@@ -24,6 +24,11 @@ export function AccountBar() {
     usage && usage.tokensLimit > 0
       ? Math.min(100, Math.round((usage.tokensUsed / usage.tokensLimit) * 100))
       : 0;
+  // Near or over the limit → stop revealing how much is left (the count + the
+  // tooltip); show a vague state instead and let the AgentPanel nudge effort.
+  const over = !!usage && usage.tokensLimit > 0 && usage.tokensUsed >= usage.tokensLimit;
+  const near = !!usage && isNearLimit(usage.tokensUsed, usage.tokensLimit);
+  const vague = near || over;
 
   const email = session?.email ?? "developer@neondeck.io";
   const initial = (email[0] ?? "•").toUpperCase();
@@ -38,12 +43,23 @@ export function AccountBar() {
       <span className={`tier-badge tier-${cfg.key}`}>{authMode === "dev" ? "Dev" : cfg.name}</span>
 
       {usage && (
-        <div className="usage-meter" title={`${formatSparks(usage.tokensUsed)} / ${formatSparks(usage.tokensLimit)} Sparks — usage fluctuates`}>
+        <div
+          className={`usage-meter${vague ? " warn" : ""}`}
+          title={
+            vague
+              ? "usage fluctuates"
+              : `${formatSparks(usage.tokensUsed)} / ${formatSparks(usage.tokensLimit)} Sparks — usage fluctuates`
+          }
+        >
           <div className="usage-meter-bar">
             <span className={pct >= 100 ? "full" : ""} style={{ width: `${pct}%` }} />
           </div>
           <span className="usage-meter-label">
-            {formatSparks(usage.tokensUsed)}/{formatSparks(usage.tokensLimit)} ✦
+            {vague
+              ? over
+                ? "Limit reached"
+                : "Nearing limit"
+              : `${formatSparks(usage.tokensUsed)}/${formatSparks(usage.tokensLimit)} ✦`}
           </span>
         </div>
       )}

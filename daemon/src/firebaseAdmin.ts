@@ -55,6 +55,12 @@ export function initFirestore(serviceAccountRaw: string | undefined): Firestore 
   return firestore;
 }
 
+/** The initialized Firestore handle, or null if not configured. (initFirestore
+ *  must have run first — it does, at server startup.) */
+export function firestoreHandle(): Firestore | null {
+  return firestore;
+}
+
 /**
  * Look up a user by email via Firebase Admin Auth (needs the service account).
  * Lets an admin manage ANY user — online or not. Returns null if not found or if

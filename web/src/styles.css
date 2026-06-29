@@ -2099,6 +2099,48 @@ textarea:focus-visible {
   color: #ffcf80; background: rgba(255,176,64,0.10);
   border: 1px solid rgba(255,176,64,0.30);
 }
+
+/* Near-limit effort nudge — shown instead of revealing how little is left. */
+.near-limit-nudge {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 12px 8px; padding: 6px 10px;
+  border-radius: 8px; font-size: 12px; line-height: 1.35;
+  color: #ffcf80; background: rgba(255,176,64,0.10);
+  border: 1px solid rgba(255,176,64,0.30);
+}
+.near-limit-nudge > span { flex: 1; }
+.near-limit-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.near-limit-x {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 2px 4px;
+}
+.near-limit-x:hover { color: var(--text); }
+
+/* Usage meter goes vague (no numbers) once near/over the limit. */
+.usage-meter.warn .usage-meter-bar span { background: var(--red); }
+.usage-meter.warn .usage-meter-label { color: #ffcf80; }
+
+/* Hub: per-tier project slot counter + cap note + per-card delete button. */
+.project-slots {
+  margin-left: 10px; font-size: 12px; font-weight: 600; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.project-slots.full { color: var(--red); }
+.cap-note { margin: 4px 0 10px; font-size: 13px; color: #ffcf80; }
+.project-card-wrap { position: relative; display: flex; }
+.project-card-wrap .project-card { flex: 1; width: 100%; }
+.project-del {
+  position: absolute; top: 8px; right: 8px;
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; line-height: 1; cursor: pointer;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid var(--border); border-radius: 8px;
+  color: var(--muted); font-size: 13px; opacity: 0.7;
+  transition: opacity 0.12s, border-color 0.12s, color 0.12s;
+}
+.project-card-wrap:hover .project-del { opacity: 1; }
+.project-del:hover { color: var(--red); border-color: var(--red); }
+.project-del:disabled { opacity: 0.4; cursor: default; }
 .effort-badge {
   font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: 99px;

@@ -483,6 +483,12 @@ export class DaemonClient {
     return { workspaceName: res.workspaceName, root: res.root };
   }
 
+  async deleteProject(name: string): Promise<void> {
+    const res = await this.request({ type: "delete_project", id: nextId(), name });
+    if (res.type !== "project_deleted") throw new Error("Delete project failed");
+    if (this.openedProject === name) this.openedProject = null;
+  }
+
   // -------- Feature A: inline AI --------
 
   /** Stream a plain-English explanation. Resolves when ai_done arrives. */

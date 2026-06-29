@@ -129,6 +129,14 @@ export function createProject(
   return { dir, init: def.init };
 }
 
+/** Delete a project folder (recursive). Validates the name/path and refuses the
+ *  projects root. No-op if it doesn't exist. */
+export function deleteProject(projectsRoot: string, name: string): void {
+  const dir = resolveProject(projectsRoot, name);
+  if (dir === path.resolve(projectsRoot)) throw new Error("Refusing to delete the projects root.");
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 export function projectInfo(projectsRoot: string, name: string): ProjectInfo {
   const abs = resolveProject(projectsRoot, name);
   const stat = fs.statSync(abs);

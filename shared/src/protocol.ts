@@ -152,6 +152,11 @@ export interface OpenProjectRequest {
   id: string;
   name: string;
 }
+export interface DeleteProjectRequest {
+  type: "delete_project";
+  id: string;
+  name: string;
+}
 
 export interface ListTreeRequest {
   type: "list_tree";
@@ -390,6 +395,7 @@ export type ClientMessage =
   | ListProjectsRequest
   | CreateProjectRequest
   | OpenProjectRequest
+  | DeleteProjectRequest
   | ListTreeRequest
   | ReadFileRequest
   | SearchFilesRequest
@@ -520,6 +526,11 @@ export interface ProjectOpenedResponse {
   id: string;
   workspaceName: string;
   root: FileNode;
+}
+export interface ProjectDeletedResponse {
+  type: "project_deleted";
+  id: string;
+  name: string;
 }
 
 export interface RuntimeChangedMessage {
@@ -765,6 +776,7 @@ export type ServerMessage =
   | ProjectsResponse
   | ProjectCreatedResponse
   | ProjectOpenedResponse
+  | ProjectDeletedResponse
   | RuntimeChangedMessage
   | TreeResponse
   | WorkspaceChangedMessage
