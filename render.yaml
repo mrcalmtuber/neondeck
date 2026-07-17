@@ -1,0 +1,74 @@
+# Render Blueprint — one Docker web service serves the whole platform on the
+# port Render injects ($PORT). Set the sync:false values in the Render dashboard.
+#
+# Free tier note: the service sleeps after ~15 min idle and has no persistent
+# disk, so anything under IDE_PROJECTS_ROOT is ephemeral unless durable storage
+# is configured (or a paid disk is attached — see the commented `disk:` below).
+services:
+  - type: web
+    name: neondeck
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true                 # every push to the connected branch redeploys
+    envVars:
+      - key: IDE_DAEMON_HOST
+        value: 0.0.0.0
+      - key: IDE_WEB_DIR
+        value: /app/web/dist
+      - key: IDE_PROJECTS_ROOT
+        value: /data/projects        # ephemeral on free (no disk)
+      # ---- Set the values below in the Render dashboard. sync:false means the
+      # value is NOT stored in this file; you're prompted for it on apply. ----
+      - key: AGENT_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      # Durable storage — leave unset to use the local (ephemeral) fallback.
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      # Billing — leave unset to keep the simulated-upgrade fallback.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_MAX
+        sync: false
+      # Per-user source sync — leave unset to disable.
+      - key: GITHUB_OAUTH_CLIENT_ID
+        sync: false
+      - key: GITHUB_OAUTH_CLIENT_SECRET
+        sync: false
+      # Transactional + lifecycle email — leave unset to fall back gracefully.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: DEV_EMAIL_FROM
+        sync: false
+      - key: PASSWORD_RESET_EMAIL_FROM
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+      - key: AGENT_MODERATION
+        sync: false
+      - key: MARKETING_EMAILS
+        sync: false
+      - key: MARKETING_WEEKLY_ACTIVE
+        sync: false
+      - key: MARKETING_WEEKLY_LAPSED
+        sync: false
+      - key: MARKETING_WEEKLY_OPTOUT
+        sync: false
+      # Admin access — REQUIRED (comma-separated login emails; no in-code default).
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: MAINTENANCE_MODE
+        sync: false
+      - key: MAINTENANCE_MESSAGE
+        sync: false
+    # disk:                          # uncomment on a PAID plan for persistent projects
+    #   name: data
+    #   mountPath: /data
+    #   sizeGB: 1

@@ -1,0 +1,21 @@
+{
+  "name": "kryct",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Kryct \u2014 a browser-based AI coding IDE: chat-driven agent, live preview, and one-click deploy. Single-port web + daemon + WebSocket with sandboxed runtimes.",
+  "license": "UNLICENSED",
+  "workspaces": [
+    "shared",
+    "web",
+    "daemon"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace web run dev",
+    "dev:daemon": "npm --workspace daemon run dev",
+    "build": "npm --workspace shared run build && npm --workspace daemon run build && npm --workspace web run build",
+    "daemon": "npm --workspace daemon run start"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

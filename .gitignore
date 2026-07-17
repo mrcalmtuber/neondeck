@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+web/.env.local
+
+# Local test workspaces (real projects live under ~/.neondeck/projects, and on a
+# deploy under the mounted volume — these are stray dev artifacts, not source).
+projects/
+.claude/
+
+# Internal working docs (audits, fix plans) — never publish these.
+flaws.md
+improve.md
+FIX_PLAN.md
+
+# Operational docs / env templates — kept locally, not published (they'd hand a
+# would-be copier the full vendor + config map).
+DEPLOY.md
+.env.example
+web/.env.example

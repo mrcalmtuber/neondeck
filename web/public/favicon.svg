@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kryct">
+  <!-- Kryct mark: flat slate tile, charcoal keyline, geometric alabaster K.
+       No gradients, no glow — Monolithic Tech Dark. -->
+  <rect width="64" height="64" rx="14" fill="#121418"/>
+  <rect x="1" y="1" width="62" height="62" rx="13" fill="none" stroke="#22262F" stroke-width="2"/>
+  <path d="M22 14v36h7V37.2l4.3-4.7L44.2 50h8.8L38.2 26.9 51.5 14h-9.8L29 27.6V14z" fill="#F3F4F6"/>
+</svg>

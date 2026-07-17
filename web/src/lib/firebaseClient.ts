@@ -1,0 +1,241 @@
+import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
+import {
+  getAuth,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  fetchSignInMethodsForEmail,
+  signInWithRedirect,
+  signInWithCredential,
+  getRedirectResult,
+  GoogleAuthProvider,
+  GithubAuthProvider,
+  sendEmailVerification,
+  signOut as fbSignOut,
+  onIdTokenChanged,
+  deleteUser,
+  type Auth,
+  type User,
+} from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+
+/**
+ * Browser-side Firebase app (Kryct platform).
+ *
+ * The configuration below is the LIVE production Firebase web config. Firebase
+ * web keys (apiKey, appId, …) are PUBLIC by design — they identify the project
+ * and are meant to ship in the client bundle; Firestore Security Rules and
+ * Firebase Auth (not key secrecy) protect the data. They are hardcoded here so
+ * Kryct connects to the real project instantly with zero .env setup.
+ *
+ * The optional VITE_FIREBASE_* env vars override any single field (handy for
+ * pointing a build at a staging project) but are not required.
+ */
+// Safari's ITP blocks the cross-site storage handoff Firebase's hosted OAuth
+// handler on *.firebaseapp.com needs (popups hang, redirects come back empty).
+// In production the daemon serves the app AND proxies /__/* to firebaseapp.com,
+// so using OUR host as the authDomain keeps the whole dance same-site and makes
+// Google sign-in work in Safari. Local dev (Vite on :5173 — no /__/ proxy on
+// that origin) keeps the hosted domain.
+const sameOriginAuthDomain =
+  typeof window !== "undefined" &&
+  window.location.hostname &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? window.location.host
+    : null;
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? "AIzaSyBG_bfyTc0mAEfF0GxsRTFjrF4v4xrqf_k",
+  authDomain:
+    import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ??
+    sameOriginAuthDomain ??
+    "neondeck-8cbe0.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID ?? "neondeck-8cbe0",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET ?? "neondeck-8cbe0.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID ?? "372340190765",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID ?? "1:372340190765:web:5f459cedff8141373652a4",
+};
+
+/** The active Firebase project id — also used to scope Firestore documents. */
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
+
+// Reuse the existing app if one is already initialized (idempotent): a second
+// initializeApp() with the same name throws "app already exists", which would
+// break the module on any re-execution.
+export const firebaseApp: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+export const auth: Auth = getAuth(firebaseApp);
+export const db: Firestore = getFirestore(firebaseApp);
+
+/**
+ * The session shape the rest of Kryct consumes. `token` is a Firebase ID
+ * token (JWT) the daemon verifies server-side; `userId` is the Firebase uid.
+ */
+export interface AuthSession {
+  token: string | null;
+  userId: string;
+  email: string | null;
+}
+
+/** Map a Firebase User to a Kryct session, attaching a fresh ID token. */
+async function toSession(user: User): Promise<AuthSession> {
+  let token: string | null = null;
+  try {
+    token = await user.getIdToken();
+  } catch {
+    /* keep token null — the daemon may still allow a loopback dev connection */
+  }
+  return { token, userId: user.uid, email: user.email };
+}
+
+export async function signUp(email: string, password: string): Promise<void> {
+  await createUserWithEmailAndPassword(auth, email, password);
+  // Email/password accounts start UNVERIFIED. The caller (AuthGateway) sends the
+  // verification email right after via sendBestVerificationEmail() — daemon-first
+  // (branded Resend) with this module's sendVerificationEmail as the fallback.
+}
+
+/** Whether the signed-in user's email is verified (false when signed out). */
+export function isEmailVerified(): boolean {
+  return auth.currentUser?.emailVerified ?? false;
+}
+
+/** (Re)send the Firebase verification email to the signed-in user. */
+export async function sendVerificationEmail(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Sign in first.");
+  if (user.emailVerified) return;
+  await sendEmailVerification(user);
+}
+
+/** Re-check verification after the user clicks the emailed link: reload the user
+ *  and force a fresh ID token so the daemon (which reads email_verified from the
+ *  token) sees the new state on the next connect. Returns the latest value. */
+export async function refreshEmailVerified(): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  await user.reload();
+  try {
+    await user.getIdToken(true); // force-refresh so the daemon gets the new claim
+  } catch {
+    /* non-fatal — the reload already updated the client-side flag */
+  }
+  return user.emailVerified;
+}
+
+export async function signIn(email: string, password: string): Promise<void> {
+  await signInWithEmailAndPassword(auth, email, password);
+}
+
+/** Email a password-reset link (Firebase hosts the reset page). */
+export async function resetPassword(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email);
+}
+
+/**
+ * Which sign-in methods exist for an email (e.g. ["password"], ["google.com"]).
+ * Best-effort: returns [] if Firebase's email-enumeration protection is on (it
+ * suppresses this for privacy). Used to warn that a Google-only account can't get
+ * a password-reset email. */
+export async function getSignInMethods(email: string): Promise<string[]> {
+  try {
+    return await fetchSignInMethodsForEmail(auth, email);
+  } catch {
+    return [];
+  }
+}
+
+/** Shared Google provider — always prompt account selection so users can switch. */
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
+
+/**
+ * Google OAuth via a full-page REDIRECT (not a popup).
+ *
+ * Popup auth (`signInWithPopup`) hangs in Safari: the OAuth handler runs on the
+ * `*.firebaseapp.com` authDomain — a different site from the app origin — and
+ * Safari's cross-site storage blocking (ITP) breaks the popup↔opener handshake,
+ * so the promise never resolves. Redirect avoids that opener channel entirely
+ * and is reliable for Chrome end-users. The page navigates to Google and back;
+ * on return the onIdTokenChanged listeners (currentSession / onAuthChange) pick
+ * up the signed-in user, so no explicit success handling is needed here.
+ */
+export async function signInWithGoogle(): Promise<void> {
+  await signInWithRedirect(auth, googleProvider);
+}
+
+/**
+ * GitHub sign-in WITHOUT Firebase's hosted handler: the daemon's own OAuth
+ * popup (same-origin callback — works in Safari) produces a repo-scoped access
+ * token, and this exchanges it for a Firebase session directly. Requires the
+ * GitHub provider to be ENABLED in the Firebase console (the existing GitHub
+ * OAuth app's client id/secret work — the hosted callback URL is never used).
+ */
+export async function signInWithGithubToken(accessToken: string): Promise<void> {
+  await signInWithCredential(auth, GithubAuthProvider.credential(accessToken));
+}
+
+/**
+ * After returning from a redirect sign-in, surface any error (or null when the
+ * redirect succeeded / there was none). Called once on the gateway's mount so a
+ * blocked/failed redirect shows a message instead of silently dropping the user
+ * back on the login screen. Bounded by an 8s race so a slow/blocked redirect
+ * can't wedge the mount effect.
+ */
+export async function getRedirectError(): Promise<unknown | null> {
+  try {
+    await Promise.race([
+      getRedirectResult(auth),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+    return null;
+  } catch (err) {
+    return err;
+  }
+}
+
+export async function signOut(): Promise<void> {
+  await fbSignOut(auth);
+}
+
+/** Fresh ID token for the current user (null if signed out). */
+export async function getIdToken(): Promise<string | null> {
+  try {
+    return (await auth.currentUser?.getIdToken()) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Permanently delete the signed-in user's account (irreversible). Firebase requires
+ * a RECENT login for this; if the session is stale it throws
+ * `auth/requires-recent-login`, which the caller surfaces as "sign in again and
+ * retry". Leftover server-side data (Firestore docs, synced projects) is harmless;
+ * the login — and the email — is freed immediately.
+ */
+export async function deleteAccount(): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("You're not signed in.");
+  await deleteUser(user);
+}
+
+/** Resolve the current session once (waits for Firebase to restore persistence). */
+export function currentSession(): Promise<AuthSession | null> {
+  return new Promise((resolve) => {
+    const off = onIdTokenChanged(auth, async (user) => {
+      off();
+      resolve(user ? await toSession(user) : null);
+    });
+  });
+}
+
+/**
+ * Subscribe to auth + token changes. Fires on sign-in, sign-out, AND silent ID
+ * token refreshes (every ~hour) so the daemon handshake always has a live JWT.
+ */
+export function onAuthChange(cb: (s: AuthSession | null) => void): () => void {
+  return onIdTokenChanged(auth, async (user) => {
+    cb(user ? await toSession(user) : null);
+  });
+}

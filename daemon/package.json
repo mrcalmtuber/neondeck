@@ -1,0 +1,32 @@
+{
+  "name": "@ide/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "bin": {
+    "ide-daemon": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@ide/shared": "*",
+    "fflate": "^0.8.3",
+    "firebase-admin": "^14.1.0",
+    "http-proxy": "^1.18.1",
+    "localtunnel": "^2.0.2",
+    "openai": "^4.56.0",
+    "stripe": "^17.7.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.14",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}

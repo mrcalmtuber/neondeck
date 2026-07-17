@@ -1,0 +1,420 @@
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import type { IncomingMessage } from "node:http";
+import { PROXY_PORT, DAEMON_PORT, DEFAULT_MAINTENANCE_MESSAGE, type AgentEffort } from "@ide/shared";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** Built web SPA, relative to the daemon source/dist (repo/web/dist). Served when
+ *  it exists so one process can host web + API + WS + previews on a single port. */
+const DEFAULT_WEB_DIR = path.resolve(__dirname, "../../web/dist");
+
+/**
+ * Daemon configuration. Resolved from CLI flags / env at startup.
+ *
+ * `projectsRoot` is the hub directory that holds each project subfolder. The
+ * active project (chosen from the Hub) becomes a session's workspace, and that
+ * workspace is the jail for every file/container op — nothing outside it is
+ * reachable. It defaults to a hidden app folder (~/.neondeck/projects) so user
+ * projects don't clutter the home directory; override with IDE_PROJECTS_ROOT.
+ *
+ * `deepseekApiKey` is read from the host environment and kept in backend memory
+ * only — it is never serialized to the browser.
+ */
+export interface DaemonConfig {
+  projectsRoot: string;
+  /** Interface the WS/HTTP server binds. Default 0.0.0.0 (headless prod, e.g. a
+   *  Raspberry Pi 5). Override with --host 127.0.0.1 for loopback-only dev. */
+  host: string;
+  /** WS/HTTP listen port (default 5000). */
+  port: number;
+  allowedOrigins: string[];
+  /** When true, accept WS/HTTP from ANY origin (reflected). Opt-in only — set
+   *  IDE_ALLOW_ALL_ORIGINS=1 or include "*" in the origin list. Don't enable on
+   *  an internet-facing node without Firebase auth + a firewall. */
+  allowAllOrigins: boolean;
+  /** Trust `X-Forwarded-Host` when deciding same-origin (needed behind Render's
+   *  TLS-terminating proxy, which is the default deploy). Set IDE_TRUST_PROXY=0 on
+   *  a directly-exposed node so a spoofed header can't satisfy the same-origin
+   *  check. Default true. */
+  trustProxyHeaders: boolean;
+  /** Container image used for `run_command` shells and the dev server. */
+  defaultImage: string;
+  /** Docker `--network` mode for every sandbox container. Default "bridge" (apps
+   *  can reach the internet, e.g. `npm install`). Set to "none" for an air-gapped
+   *  sandbox (blocks all egress — data-exfil / SSRF / mining / outbound DoS), or a
+   *  named egress-filtered network. From IDE_CONTAINER_NETWORK. */
+  containerNetwork: string;
+  /** SECURITY: when true, refuse to execute user/agent code unless a hardened
+   *  sandbox (Docker) is actually available — i.e. block the weakly-isolated
+   *  LOCAL_NODE host-exec fallback. Off by default so single-tenant/local dev keeps
+   *  working; turn ON for any multi-tenant or internet-facing deploy that lacks
+   *  Docker. From IDE_REQUIRE_SANDBOX. */
+  requireSandbox: boolean;
+  /** Legacy preview gateway port. The proxy is now mounted on the main `port`
+   *  (see server.ts) so the whole app fits one PaaS port; this is kept only for
+   *  the hello payload's back-compat field and binds nothing. */
+  proxyPort: number;
+  /** Built web SPA directory served on the main port (empty/missing → not served,
+   *  e.g. local dev where Vite serves the web). Override with IDE_WEB_DIR. */
+  webDir: string;
+  /** SECURITY: a SEPARATE origin to serve live previews from (e.g.
+   *  "https://preview.neondeck.app"), so untrusted user/AI-generated preview code
+   *  runs cross-origin and can't read the IDE's localStorage / auth tokens. When
+   *  set, the browser points the preview iframe at this origin (it must resolve to
+   *  THIS same daemon — e.g. a wildcard/second hostname on the same service). When
+   *  empty, previews stay same-origin and the client drops the iframe's
+   *  `allow-same-origin` instead (isolation via an opaque origin). From
+   *  IDE_PREVIEW_ORIGIN. */
+  previewOrigin: string;
+  /** DeepSeek secret, sourced from process.env.DEEPSEEK_API_KEY. Never sent out. */
+  deepseekApiKey: string;
+  deepseekBaseUrl: string;
+  deepseekModel: string;
+  /** Model per reasoning-effort level (free=low / pro=high / max=max). Each
+   *  defaults to deepseekModel; set AGENT_MODEL_LOW / _HIGH / _MAX to route the
+   *  higher-effort tiers to a distinct (e.g. reasoning) model. */
+  agentModels: Record<AgentEffort, string>;
+
+  // ---- auth (Firebase) ----
+  /** Firebase project id. When set the daemon verifies real Firebase ID tokens
+   *  (against Google's public certs); set to "" to fall back to a local "dev"
+   *  user. Defaults to the live Kryct project so auth works out of the box. */
+  firebaseProjectId: string;
+  /** Tier granted to the local dev user when auth is not configured. */
+  devTier: number;
+  /** LOCAL DEV ONLY: when true AND the daemon is bound to a loopback host, a
+   *  token-less connection from loopback is granted the local "dev" user (so
+   *  daemon mode works with no sign-in). Off by default; never enable on a
+   *  public node or behind a reverse proxy (see server.ts gating). */
+  trustLoopback: boolean;
+
+  // ---- v6: billing (Stripe, test-mode from env) ----
+  stripeSecretKey: string;
+  stripeWebhookSecret: string;
+  /** Stripe price ids per paid tier (test-mode). Empty until you set them. */
+  stripePricePro: string;
+  stripePriceMax: string;
+  /** Yearly (16%-off) price ids; empty → yearly checkout is unavailable. */
+  stripePriceProYearly: string;
+  stripePriceMaxYearly: string;
+  /** Publishable key (pk_…, safe for the browser) — required for the embedded
+   *  checkout the web app mounts; without it checkout falls back to errors. */
+  stripePublishableKey: string;
+  /** Where Stripe Checkout returns the user (defaults to the app origin). */
+  appOrigin: string;
+
+  // ---- v7: GitHub OAuth (per-user project sync to their own GitHub) ----
+  /** OAuth App client id (public — sent to the browser to build the authorize
+   *  URL) and secret (daemon-only — used in the code→token exchange). Empty until
+   *  set; when unset the whole GitHub-sync feature is off. */
+  githubClientId: string;
+  githubClientSecret: string;
+
+  // ---- Admin ops ----
+  /** Login emails granted admin access (the ops dashboard + maintenance toggle).
+   *  From ADMIN_EMAILS (comma-separated); compared lowercased against the user's
+   *  Firebase email. Empty (no admins) until set — env-only, never hardcoded. */
+  adminEmails: string[];
+
+  /** Directory holding cross-user metering/account ledgers (hidden from Hub). */
+  metaDir: string;
+
+  // ---- durable usage persistence (Firestore) ----
+  /** Firebase service-account credentials (raw JSON, or base64 of it) that let the
+   *  daemon write to Firestore, so per-user monthly usage survives a diskless
+   *  restart. Empty → fall back to the on-disk JSON ledger (fine for local dev,
+   *  wiped on Render's diskless FS). From FIREBASE_SERVICE_ACCOUNT. */
+  firebaseServiceAccount: string;
+
+  // ---- Firestore "persistent disk" caps (firestoreFs.ts) ----
+  /** Largest single file (MB) included in a project snapshot. From FS_MAX_FILE_MB. */
+  fsMaxFileMb: number;
+  /** Per-project snapshot quota (MB of stored, post-gzip base64 data). Over-quota
+   *  files are skipped deterministically (biggest binaries first) and the user is
+   *  warned once. From FS_PROJECT_QUOTA_MB. */
+  fsProjectQuotaMb: number;
+
+  // ---- snapshot inactivity lifecycle (lifecycle.ts) ----
+  /** Kill switch for the warn→archive→delete sweep (it deletes user data, so it
+   *  gets its own off switch). From FS_LIFECYCLE (default on). */
+  fsLifecycleEnabled: boolean;
+  /** Days without activity before the warning email. Fractional values work
+   *  (handy for testing). From FS_INACTIVE_DAYS. */
+  fsInactiveDays: number;
+  /** Hours after the warning before the project is archived. From FS_WARN_GRACE_HOURS. */
+  fsWarnGraceHours: number;
+  /** Hours after archiving before permanent deletion. From FS_ARCHIVE_GRACE_HOURS. */
+  fsArchiveGraceHours: number;
+  /** How often the sweep runs, in minutes. From FS_SWEEP_MINUTES. */
+  fsSweepMinutes: number;
+
+  // ---- maintenance (temporary test feature) ----
+  /** MAINTENANCE (temporary — remove later): boot the daemon already locked into
+   *  maintenance mode so it survives restarts/redeploys. From MAINTENANCE_MODE
+   *  (on/1/true). The admin dashboard can still toggle it live for this process. */
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+
+  // ---- developer program (waitlist -> pay-per-use API keys) ----
+  /** Master switch for the whole developer program (Settings Dev section,
+   *  dev_* messages, /api/v1). Default on; set DEV_PROGRAM_ENABLED=0 to hide. */
+  devProgramEnabled: boolean;
+  /** Resend API key for the automated acceptance email. Empty → waitlisted users
+   *  are still auto-accepted on schedule, just silently (no email). */
+  resendApiKey: string;
+  /** The acceptance email's From header. Resend's shared onboarding sender works
+   *  with zero domain setup; switch to a verified domain later. */
+  devEmailFrom: string;
+  /** From header for password-reset emails (defaults to devEmailFrom). */
+  passwordResetEmailFrom: string;
+  /** Inbox that receives suspension appeals / support mail sent by the daemon.
+   *  The public-facing address is support@kryct.com; point this env at a real
+   *  monitored inbox if that domain can't receive mail yet. */
+  supportEmail: string;
+  /** Auto-suspend accounts whose agent prompt hits a zero-tolerance category
+   *  (sexual content involving minors, NSFW generation, weapons/drugs). Default
+   *  ON; set AGENT_MODERATION=off to disable (e.g. while tuning). */
+  agentModeration: boolean;
+  /** Master switch for the recurring marketing/lifecycle email engine. Default
+   *  ON, but only actually sends when RESEND_API_KEY is also set (so it stays
+   *  dark until email is configured). Set MARKETING_EMAILS=off to disable. */
+  marketingEmails: boolean;
+  /** Target emails per ISO week by segment (spread across the week). */
+  marketingWeeklyActive: number; // logged in this week + opted in
+  marketingWeeklyLapsed: number; // not seen in ≥7 days + opted in (win-back)
+  marketingWeeklyOptOut: number; // opted out of marketing (transactional cadence)
+  /** Hours a registration waits before the daemon auto-accepts it (~2 days). */
+  devWaitlistHours: number;
+  /** Stripe METERED price ids for the developer API — one subscription carries
+   *  both. Created in the dashboard against the neondeck_api_input_tokens /
+   *  neondeck_api_output_tokens meters ($6 / $10 per 1M). Empty until set. */
+  stripePriceApiInput: string;
+  stripePriceApiOutput: string;
+}
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://app.your-ide-domain.com", // <-- replace with your verified production domain
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+/** Legacy + hidden default locations for the projects hub. */
+const LEGACY_PROJECTS_ROOT = path.join(os.homedir(), "ide-projects");
+const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), ".neondeck", "projects");
+
+/** Resolve the projects hub. An explicit override (flag/env/--workspace) always
+ *  wins; otherwise default to the hidden ~/.neondeck/projects, migrating a legacy
+ *  ~/ide-projects into it once so existing projects don't disappear. */
+function resolveProjectsRoot(args: Record<string, string>): string {
+  // Back-compat: --workspace X is treated as a single project under root=dirname(X).
+  const explicit =
+    args.root ??
+    process.env.IDE_PROJECTS_ROOT ??
+    (args.workspace ? path.dirname(path.resolve(args.workspace)) : null);
+  if (explicit) return path.resolve(explicit);
+
+  const root = DEFAULT_PROJECTS_ROOT;
+  try {
+    if (!fs.existsSync(root) && fs.existsSync(LEGACY_PROJECTS_ROOT)) {
+      fs.mkdirSync(path.dirname(root), { recursive: true });
+      fs.renameSync(LEGACY_PROJECTS_ROOT, root);
+      console.log(`[daemon] migrated projects: ${LEGACY_PROJECTS_ROOT} -> ${root}`);
+    }
+  } catch (err) {
+    console.warn(`[daemon] projects migration skipped: ${(err as Error).message}`);
+  }
+  return root;
+}
+
+export function loadConfig(argv: string[]): DaemonConfig {
+  const args = parseFlags(argv);
+
+  const projectsRoot = resolveProjectsRoot(args);
+
+  const extraOrigins = (args.origin ?? process.env.IDE_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const allowedOrigins = [...DEFAULT_ALLOWED_ORIGINS, ...extraOrigins];
+  const allowAllOrigins =
+    /^(1|true|yes)$/i.test(process.env.IDE_ALLOW_ALL_ORIGINS ?? "") ||
+    allowedOrigins.includes("*");
+  // Trust proxy forwarding headers by default (Render terminates TLS in front of
+  // us); flip off only on a directly-exposed node.
+  const trustProxyHeaders = !/^(0|false|no|off)$/i.test(process.env.IDE_TRUST_PROXY ?? "");
+  // Where Stripe Checkout returns the browser. Prefer an explicit override; on
+  // Render the platform injects RENDER_EXTERNAL_URL (the live https URL), so real
+  // checkout returns to the deployed site with zero manual config.
+  const appOrigin =
+    process.env.IDE_APP_ORIGIN ??
+    process.env.RENDER_EXTERNAL_URL ??
+    extraOrigins.find((o) => o !== "*") ??
+    "http://localhost:5173";
+
+  // Base agent model; effort variants fall back to it unless explicitly overridden.
+  const agentModel = process.env.AGENT_MODEL ?? process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash";
+
+  return {
+    projectsRoot,
+    // Bind globally by default so a headless ARM64 node (Pi 5) is reachable by
+    // external users; flip to 127.0.0.1 with --host for loopback-only dev.
+    host: args.host ?? process.env.IDE_DAEMON_HOST ?? "0.0.0.0",
+    // $PORT is injected by PaaS platforms (Fly/Render/Railway) — honor it so one
+    // service can be reached on the platform's assigned port.
+    port: Number(args.port ?? process.env.PORT ?? process.env.IDE_DAEMON_PORT ?? DAEMON_PORT),
+    allowedOrigins,
+    allowAllOrigins,
+    trustProxyHeaders,
+    defaultImage: args.image ?? process.env.IDE_IMAGE ?? "node:20-alpine",
+    containerNetwork: (process.env.IDE_CONTAINER_NETWORK ?? "bridge").trim() || "bridge",
+    requireSandbox: /^(1|true|on|yes)$/i.test(process.env.IDE_REQUIRE_SANDBOX ?? ""),
+    proxyPort: Number(args.proxyPort ?? process.env.IDE_PROXY_PORT ?? PROXY_PORT),
+    webDir: args.webDir ?? process.env.IDE_WEB_DIR ?? DEFAULT_WEB_DIR,
+    // Optional separate preview origin (no trailing slash) for cross-origin
+    // isolation of untrusted preview apps. Empty → same-origin previews.
+    previewOrigin: (process.env.IDE_PREVIEW_ORIGIN ?? "").trim().replace(/\/$/, ""),
+    // Secret stays here, in backend memory. White-label aliases (AGENT_*) are
+    // preferred; the legacy provider-named vars remain as a fallback so existing
+    // setups keep working. Field names are internal only — never user-facing.
+    deepseekApiKey: process.env.AGENT_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? "",
+    deepseekBaseUrl:
+      process.env.AGENT_BASE_URL ?? process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
+    deepseekModel: agentModel,
+    agentModels: {
+      low: process.env.AGENT_MODEL_LOW ?? agentModel,
+      medium: process.env.AGENT_MODEL_MEDIUM ?? agentModel,
+      high: process.env.AGENT_MODEL_HIGH ?? agentModel,
+    },
+
+    // Auth (Firebase) — ID tokens verified server-side against Google's public
+    // certs. The project id is public; no service-account secret is needed.
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? "neondeck-8cbe0",
+    devTier: parseTier(process.env.IDE_DEV_TIER) ?? 2, // local dev unlocks Max
+    trustLoopback: /^(1|true|yes)$/i.test(process.env.IDE_TRUST_LOOPBACK ?? ""),
+
+    // Billing (Stripe, test-mode from env).
+    stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? "",
+    stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+    stripePricePro: process.env.STRIPE_PRICE_PRO ?? "",
+    stripePriceMax: process.env.STRIPE_PRICE_MAX ?? "",
+    stripePriceProYearly: process.env.STRIPE_PRICE_PRO_YEARLY ?? "",
+    stripePriceMaxYearly: process.env.STRIPE_PRICE_MAX_YEARLY ?? "",
+    stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? "",
+    appOrigin,
+
+    // GitHub OAuth (per-user project sync). Off unless both are set.
+    githubClientId: process.env.GITHUB_OAUTH_CLIENT_ID ?? "",
+    githubClientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET ?? "",
+
+    // Admin ops — who can see the dashboard + flip maintenance. Env-only: no
+    // hardcoded default (this is a public repo; unset ⇒ no admins).
+    adminEmails: (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+
+    metaDir: path.join(projectsRoot, ".ide-meta"),
+
+    // Durable usage persistence — Firestore via a service account (so the monthly
+    // token meter survives Render's diskless redeploys). Empty → local JSON ledger.
+    firebaseServiceAccount: process.env.FIREBASE_SERVICE_ACCOUNT ?? "",
+
+    // Firestore "persistent disk" caps (see firestoreFs.ts for the layout).
+    fsMaxFileMb: Number(process.env.FS_MAX_FILE_MB ?? 5),
+    fsProjectQuotaMb: Number(process.env.FS_PROJECT_QUOTA_MB ?? 20),
+
+    // Snapshot inactivity lifecycle: 30d idle → warn → 48h → archive → 24h → delete.
+    fsLifecycleEnabled: !/^(0|false|off|no)$/i.test(process.env.FS_LIFECYCLE ?? ""),
+    fsInactiveDays: Number(process.env.FS_INACTIVE_DAYS ?? 30),
+    fsWarnGraceHours: Number(process.env.FS_WARN_GRACE_HOURS ?? 48),
+    fsArchiveGraceHours: Number(process.env.FS_ARCHIVE_GRACE_HOURS ?? 24),
+    fsSweepMinutes: Number(process.env.FS_SWEEP_MINUTES ?? 60),
+
+    // MAINTENANCE (temporary — remove later)
+    maintenanceMode: /^(1|true|on|yes)$/i.test(process.env.MAINTENANCE_MODE ?? ""),
+    maintenanceMessage: process.env.MAINTENANCE_MESSAGE ?? DEFAULT_MAINTENANCE_MESSAGE,
+
+    // Developer program — waitlist + pay-per-use API keys. On by default; every
+    // piece degrades gracefully when its env is unset (no email / mock billing).
+    devProgramEnabled: !/^(0|false|off|no)$/i.test(process.env.DEV_PROGRAM_ENABLED ?? ""),
+    resendApiKey: process.env.RESEND_API_KEY ?? "",
+    devEmailFrom: process.env.DEV_EMAIL_FROM ?? "Kryct <onboarding@resend.dev>",
+    passwordResetEmailFrom:
+      process.env.PASSWORD_RESET_EMAIL_FROM ??
+      process.env.DEV_EMAIL_FROM ??
+      "Kryct <onboarding@resend.dev>",
+    supportEmail: process.env.SUPPORT_EMAIL ?? "support@kryct.com",
+    agentModeration: !/^(0|false|off|no)$/i.test(process.env.AGENT_MODERATION ?? ""),
+    marketingEmails: !/^(0|false|off|no)$/i.test(process.env.MARKETING_EMAILS ?? ""),
+    marketingWeeklyActive: Number(process.env.MARKETING_WEEKLY_ACTIVE ?? 2),
+    marketingWeeklyLapsed: Number(process.env.MARKETING_WEEKLY_LAPSED ?? 3),
+    marketingWeeklyOptOut: Number(process.env.MARKETING_WEEKLY_OPTOUT ?? 1),
+    devWaitlistHours: Number(process.env.DEV_WAITLIST_HOURS ?? 48),
+    stripePriceApiInput: process.env.STRIPE_PRICE_API_INPUT ?? "",
+    stripePriceApiOutput: process.env.STRIPE_PRICE_API_OUTPUT ?? "",
+  };
+}
+
+/**
+ * Dynamic CORS / WS origin gate. Returns the value to reflect in
+ * Access-Control-Allow-Origin (or pass to ws verifyClient), or null to reject.
+ * With allowAllOrigins we echo whatever origin asked; otherwise we match the
+ * configured allow-list exactly.
+ */
+export function allowedOriginFor(config: DaemonConfig, origin: string | undefined): string | null {
+  if (config.allowAllOrigins) return origin ?? "*";
+  if (origin && config.allowedOrigins.includes(origin)) return origin;
+  return null;
+}
+
+const LOOPBACK_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+/**
+ * Decide whether a connection may use the token-less local "dev" user. Shared by
+ * the WS handshake (server.ts) and the HTTP API (httpApi.ts). ALL must hold
+ * (defense-in-depth so a public node never grants dev access):
+ *   1. IDE_TRUST_LOOPBACK is set,
+ *   2. the daemon is bound to a loopback host (a 0.0.0.0 bind disables it),
+ *   3. NO proxy headers are present (a proxy makes every client look loopback),
+ *   4. the socket's remote address is loopback.
+ * Never enable IDE_TRUST_LOOPBACK on a public node or behind a reverse proxy.
+ */
+export function loopbackDevAllowed(req: IncomingMessage, config: DaemonConfig): boolean {
+  if (!config.trustLoopback) return false;
+  if (config.host !== "127.0.0.1" && config.host !== "localhost" && config.host !== "::1") {
+    console.warn("[daemon] IDE_TRUST_LOOPBACK ignored: daemon is not bound to a loopback host.");
+    return false;
+  }
+  if (req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || req.headers["forwarded"]) {
+    return false; // a proxy is in front — the socket address can't be trusted
+  }
+  return LOOPBACK_ADDRS.has(req.socket.remoteAddress ?? "");
+}
+
+/** Accept a tier as 0/1/2 or free/pro/max. */
+function parseTier(v: string | undefined): number | null {
+  if (!v) return null;
+  const map: Record<string, number> = { free: 0, pro: 1, max: 2, "0": 0, "1": 1, "2": 2 };
+  return map[v.trim().toLowerCase()] ?? null;
+}
+
+function parseFlags(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next && !next.startsWith("--")) {
+        out[key] = next;
+        i++;
+      } else {
+        out[key] = "true";
+      }
+    }
+  }
+  return out;
+}

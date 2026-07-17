@@ -1,0 +1,14 @@
+{
+  "name": "Kryct",
+  "short_name": "Kryct",
+  "description": "Build, run, and ship apps with an AI agent, in the cloud.",
+  "theme_color": "#090A0C",
+  "background_color": "#090A0C",
+  "display": "standalone",
+  "start_url": "/",
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" }
+  ]
+}
